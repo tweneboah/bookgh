@@ -25,6 +25,8 @@ interface ImageUploadProps {
   className?: string;
   label?: string;
   showCaptions?: boolean;
+  /** Called with selected files before upload starts (e.g. for logo color extraction). */
+  onFilesSelected?: (files: File[]) => void;
 }
 
 const MAX_SIZE = 10 * 1024 * 1024;
@@ -40,6 +42,7 @@ export function ImageUpload({
   className,
   label,
   showCaptions = false,
+  onFilesSelected,
 }: ImageUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -69,6 +72,8 @@ export function ImageUpload({
           return;
         }
       }
+
+      onFilesSelected?.(fileArray);
 
       const formData = new FormData();
       formData.append("folder", folder);

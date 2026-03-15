@@ -23,3 +23,5 @@ export { AppDatePicker } from "./date-picker";
 export { AppTimePicker } from "./time-picker";
 export type { UploadedImage } from "./image-upload";
 export { ImageUpload } from "./image-upload";
+export type { ColorPickerProps } from "./color-picker";
+export { ColorPicker } from "./color-picker";
