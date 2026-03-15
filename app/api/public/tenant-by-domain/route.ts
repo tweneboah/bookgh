@@ -42,6 +42,9 @@ export const GET = withHandler(async (req: NextRequest) => {
     .lean();
 
   const branchSlug = branch?.slug ?? (tenant as any).slug;
+  if (!branchSlug || typeof branchSlug !== "string") {
+    throw new NotFoundError("Tenant");
+  }
 
   return successResponse({
     slug: branchSlug,

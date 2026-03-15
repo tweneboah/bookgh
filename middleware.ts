@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+function notFoundResponse(host: string): NextResponse {
+  return new NextResponse(
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Not found</title></head><body><h1>Hotel not found</h1><p>No hotel is configured for this domain (${host}).</p><p>If you own this domain, add it in Bookgh under Platform → Tenants → Edit → Custom domain.</p></body></html>`,
+    { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } }
+  );
+}
+
 const PLATFORM_HOST = process.env.NEXT_PUBLIC_APP_URL
   ? new URL(process.env.NEXT_PUBLIC_APP_URL).hostname.toLowerCase()
   : null;
@@ -25,23 +32,26 @@ export async function middleware(request: NextRequest) {
   }
 
   const platformOrigin = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? request.nextUrl.origin;
-  let slug: string;
+  let slug: string | undefined;
   try {
     const res = await fetch(
       `${platformOrigin}/api/public/tenant-by-domain?domain=${encodeURIComponent(host)}`,
-      { headers: { host: request.headers.get("host") ?? "" } }
+      {
+        headers: { host: request.headers.get("host") ?? "" },
+        cache: "no-store",
+      }
     );
     if (!res.ok) {
-      return NextResponse.next();
+      return notFoundResponse(host);
     }
     const json = await res.json();
     slug = json?.data?.slug;
   } catch {
-    return NextResponse.next();
+    return notFoundResponse(host);
   }
 
   if (!slug) {
-    return NextResponse.next();
+    return notFoundResponse(host);
   }
 
   const url = request.nextUrl.clone();

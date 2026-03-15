@@ -53,7 +53,8 @@ export default function ActivityLogsPage() {
   const { data, isLoading } = useActivityLogs(params);
   const { data: usersData } = useUsers({ limit: "100" });
 
-  const items = (data?.data ?? data) as LogItem[];
+  const rawItems = data?.data ?? data;
+  const items = (Array.isArray(rawItems) ? rawItems : []) as LogItem[];
   const pagination = (data?.meta as {
     pagination?: { page: number; limit: number; total: number };
   })?.pagination;
