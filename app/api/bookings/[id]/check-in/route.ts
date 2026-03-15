@@ -1,0 +1,95 @@
+import { withHandler } from "@/lib/with-handler";
+import { successResponse } from "@/lib/api-response";
+import { requireBranch } from "@/lib/auth-context";
+import { NotFoundError, BadRequestError } from "@/lib/errors";
+import Booking from "@/models/booking/Booking";
+import Guest from "@/models/booking/Guest";
+import Room from "@/models/room/Room";
+import { checkInSchema } from "@/validations/booking";
+import { BOOKING_STATUS, ROOM_STATUS } from "@/constants";
+import mongoose from "mongoose";
+
+export const POST = withHandler(
+  async (req, { auth, params }) => {
+    const { tenantId, branchId } = requireBranch(auth);
+    const { id } = params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      throw new NotFoundError("Booking");
+    }
+
+    const body = await req.json();
+    const data = checkInSchema.parse(body);
+
+    const booking = await Booking.findById(id).lean();
+
+    if (
+      !booking ||
+      String(booking.tenantId) !== tenantId ||
+      String(booking.branchId) !== branchId
+    ) {
+      throw new NotFoundError("Booking");
+    }
+
+    if (booking.status !== BOOKING_STATUS.PENDING && booking.status !== BOOKING_STATUS.CONFIRMED) {
+      throw new BadRequestError("Booking cannot be checked in");
+    }
+
+    const room = await Room.findById(data.roomId).lean();
+
+    if (
+      !room ||
+      String(room.tenantId) !== tenantId ||
+      String(room.branchId) !== branchId
+    ) {
+      throw new NotFoundError("Room");
+    }
+
+    if (room.status !== ROOM_STATUS.AVAILABLE && room.status !== ROOM_STATUS.RESERVED) {
+      throw new BadRequestError("Room is not available for check-in");
+    }
+
+    const updateData: Record<string, unknown> = {
+      roomId: data.roomId,
+      actualCheckIn: new Date(),
+      status: BOOKING_STATUS.CHECKED_IN,
+    };
+    if (data.depositPaid !== undefined) {
+      updateData.depositPaid = data.depositPaid;
+    }
+    if (data.idType) {
+      updateData.checkInIdType = data.idType;
+    }
+    if (data.idNumber) {
+      updateData.checkInIdNumber = data.idNumber;
+    }
+    if (data.idDocument) {
+      updateData.checkInIdDocument = data.idDocument;
+    }
+
+    await Promise.all([
+      Booking.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true }),
+      Room.findByIdAndUpdate(data.roomId, { $set: { status: ROOM_STATUS.OCCUPIED } }),
+      (data.idType || data.idNumber || data.idDocument) &&
+        Guest.findByIdAndUpdate(
+          booking.guestId,
+          {
+            $set: {
+              ...(data.idType ? { idType: data.idType } : {}),
+              ...(data.idNumber ? { idNumber: data.idNumber } : {}),
+              ...(data.idDocument ? { idDocument: data.idDocument } : {}),
+            },
+          },
+          { runValidators: true }
+        ),
+    ]);
+
+    const updatedBooking = await Booking.findById(id)
+      .populate("guestId")
+      .populate("roomId")
+      .populate("roomCategoryId")
+      .lean();
+
+    return successResponse(updatedBooking);
+  },
+  { auth: true }
+);

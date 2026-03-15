@@ -1,26 +1,159 @@
 @import "tailwindcss";
+@import "react-datepicker/dist/react-datepicker.css";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand palette from design/ui.md */
+  --primary: #6C5DD3;
+  --primary-light: #7B6FE8;
+  --primary-dark: #5A4FCF;
+  --accent-teal: #2EC4B6;
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --info: #3B82F6;
+  --background: #F5F6FA;
+  --card-bg: #FFFFFF;
+  --border: #E5E7EB;
+  --text-primary: #1F2937;
+  --text-secondary: #6B7280;
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.05);
+  --radius: 12px;
+  --radius-lg: 16px;
+  /* Legacy / layout */
+  --foreground: var(--text-primary);
+  --sidebar-bg: #1F2937;
+  --sidebar-text: #e5e7eb;
+  --sidebar-active: var(--primary);
+  --primary-hover: var(--primary-dark);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-primary: var(--primary);
+  --color-accent: var(--accent-teal);
+  --font-sans: "Inter", var(--font-geist-sans), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"] {
+  color-scheme: light;
+}
+
+dialog::backdrop {
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.2s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.15s ease-out;
+}
+
+/* Datepicker popper above modals and not clipped */
+.react-datepicker-popper-z {
+  z-index: 10000 !important;
+}
+.react-datepicker-popper {
+  z-index: 10000 !important;
+}
+
+/* Discovery homepage: catchy date range picker */
+.discovery-datepicker-popper {
+  z-index: 10000 !important;
+}
+.discovery-datepicker-calendar .react-datepicker__header {
+  background: linear-gradient(135deg, #5a189a 0%, #7b2cbf 100%);
+  border-radius: 8px 8px 0 0;
+  padding-top: 12px;
+}
+.discovery-datepicker-calendar .react-datepicker__current-month,
+.discovery-datepicker-calendar .react-datepicker__day-name {
+  color: #fff;
+  font-weight: 600;
+}
+.discovery-datepicker-calendar .react-datepicker__day--selected,
+.discovery-datepicker-calendar .react-datepicker__day--in-range {
+  background: linear-gradient(135deg, #ff6d00 0%, #ff9e00 100%) !important;
+  color: #fff !important;
+  border-radius: 6px;
+}
+.discovery-datepicker-calendar .react-datepicker__day--keyboard-selected {
+  background: rgba(90, 24, 154, 0.2) !important;
+  color: #5a189a;
+}
+.discovery-datepicker-calendar .react-datepicker__day:hover {
+  background: rgba(90, 24, 154, 0.1);
+  border-radius: 6px;
+}
+
+/* Platform landing (LuxeStay-style SaaS homepage) */
+.platform-landing {
+  font-family: "Public Sans", sans-serif;
+}
+.platform-landing .glass-effect {
+  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.8);
+}
+.platform-landing .orange-gradient {
+  background: linear-gradient(135deg, #ec5b13 0%, #ff8c42 100%);
+}
+.platform-landing .shadow-primary\/20 {
+  box-shadow: 0 10px 40px rgba(236, 91, 19, 0.2);
+}
+.platform-landing .shadow-primary\/40 {
+  box-shadow: 0 10px 40px rgba(236, 91, 19, 0.4);
+}
+.platform-landing .shadow-primary\/5 {
+  box-shadow: 0 25px 50px rgba(236, 91, 19, 0.05);
+}
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+/* Booking callback: bottom bar shimmer */
+@keyframes booking-callback-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+.booking-callback-shimmer {
+  animation: booking-callback-shimmer 2s ease-in-out infinite;
 }
