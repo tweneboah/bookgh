@@ -14,7 +14,7 @@ import { Shield, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { USER_ROLES } from "@/constants";
 
-const BRANCH_CHOOSER_ROLES = [USER_ROLES.TENANT_ADMIN, USER_ROLES.BRANCH_MANAGER, USER_ROLES.SUPER_ADMIN];
+const BRANCH_CHOOSER_ROLES: string[] = [USER_ROLES.TENANT_ADMIN, USER_ROLES.BRANCH_MANAGER, USER_ROLES.SUPER_ADMIN];
 
 const NO_SHOW_OPTIONS = [
   { value: "none", label: "No charge" },
@@ -37,7 +37,7 @@ const DEPOSIT_OPTIONS = [
 
 export default function AccommodationPoliciesPage() {
   const { user } = useAppSelector((s) => s.auth);
-  const canChooseBranch = (user as { role?: string })?.role && BRANCH_CHOOSER_ROLES.includes((user as { role?: string }).role as string);
+  const canChooseBranch = (user as { role?: string })?.role && BRANCH_CHOOSER_ROLES.includes((user as { role?: string }).role!);
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const { data: branchesData } = useBranches({ limit: "200" });
   const branches = branchesData?.data ?? [];

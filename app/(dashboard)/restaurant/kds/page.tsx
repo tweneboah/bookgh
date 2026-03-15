@@ -21,10 +21,10 @@ const lanes: Array<{
 
 const PREP_ROLES = new Set([
   "tenantAdmin", "branchManager", "restaurantManager", "headChef", "sousChef", "kitchenStaff", "supervisor",
-]);
+]) as Set<string>;
 const SERVE_ROLES = new Set([
   "tenantAdmin", "branchManager", "restaurantManager", "supervisor", "cashier", "waiter",
-]);
+]) as Set<string>;
 
 function minutesSince(dateLike?: string): number {
   if (!dateLike) return 0;

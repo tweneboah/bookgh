@@ -86,6 +86,7 @@ type EquipmentBookedRow = { resourceId: string; quantity: string };
 type Booking = {
   _id: string;
   bookingReference?: string;
+  title?: string;
   clientName?: string;
   eventType?: string;
   eventHallId?: { name?: string } | string;
@@ -809,7 +810,7 @@ export default function EventBookingsPage() {
                       value={form.selectedLayoutName}
                       onChange={(v) => {
                         setForm((f) => ({ ...f, selectedLayoutName: v ?? "" }));
-                        setFieldErrors((e) => ({ ...e, selectedLayoutName: undefined }));
+                        setFieldErrors((e) => ({ ...e, selectedLayoutName: "" }));
                       }}
                       options={layoutOptions}
                       placeholder="Optional"
@@ -906,7 +907,7 @@ export default function EventBookingsPage() {
                     value={form.clientName}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, clientName: e.target.value }));
-                      setFieldErrors((e) => ({ ...e, clientName: undefined }));
+                      setFieldErrors((e) => ({ ...e, clientName: "" }));
                     }}
                     required
                     placeholder="Full name"
@@ -919,7 +920,7 @@ export default function EventBookingsPage() {
                     value={form.clientEmail}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, clientEmail: e.target.value }));
-                      setFieldErrors((e) => ({ ...e, clientEmail: undefined }));
+                      setFieldErrors((e) => ({ ...e, clientEmail: "" }));
                     }}
                     placeholder="Optional"
                     error={fieldErrors.clientEmail}
@@ -929,7 +930,7 @@ export default function EventBookingsPage() {
                     value={form.clientPhone}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, clientPhone: e.target.value }));
-                      setFieldErrors((e) => ({ ...e, clientPhone: undefined }));
+                      setFieldErrors((e) => ({ ...e, clientPhone: "" }));
                     }}
                     placeholder="Optional"
                     error={fieldErrors.clientPhone}
@@ -955,7 +956,7 @@ export default function EventBookingsPage() {
                           type="button"
                           onClick={() => {
                             setForm((f) => ({ ...f, eventType: opt.value }));
-                            setFieldErrors((e) => ({ ...e, eventType: undefined }));
+                            setFieldErrors((e) => ({ ...e, eventType: "" }));
                           }}
                           className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
                             form.eventType === opt.value
@@ -976,7 +977,7 @@ export default function EventBookingsPage() {
                     value={form.title}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, title: e.target.value }));
-                      setFieldErrors((e) => ({ ...e, title: undefined }));
+                      setFieldErrors((e) => ({ ...e, title: "" }));
                     }}
                     required
                     placeholder="e.g. Annual Corporate Retreat"
@@ -987,7 +988,7 @@ export default function EventBookingsPage() {
                     value={form.description}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, description: e.target.value }));
-                      setFieldErrors((e) => ({ ...e, description: undefined }));
+                      setFieldErrors((e) => ({ ...e, description: "" }));
                     }}
                     placeholder="Optional"
                     rows={2}
@@ -1163,7 +1164,7 @@ export default function EventBookingsPage() {
                             quotedPrice: suggested != null ? String(suggested) : f.quotedPrice,
                           };
                         });
-                        setFieldErrors((e) => ({ ...e, startDate: undefined }));
+                        setFieldErrors((e) => ({ ...e, startDate: "" }));
                       }}
                       showTimeSelect
                       timeIntervals={15}
@@ -1188,7 +1189,7 @@ export default function EventBookingsPage() {
                             quotedPrice: suggested != null ? String(suggested) : f.quotedPrice,
                           };
                         });
-                        setFieldErrors((e) => ({ ...e, endDate: undefined }));
+                        setFieldErrors((e) => ({ ...e, endDate: "" }));
                       }}
                       showTimeSelect
                       timeIntervals={15}
@@ -1204,7 +1205,7 @@ export default function EventBookingsPage() {
                       value={form.expectedAttendees}
                       onChange={(e) => {
                         setForm((f) => ({ ...f, expectedAttendees: e.target.value }));
-                        setFieldErrors((e) => ({ ...e, expectedAttendees: undefined }));
+                        setFieldErrors((e) => ({ ...e, expectedAttendees: "" }));
                       }}
                       placeholder="Optional"
                       error={fieldErrors.expectedAttendees}
@@ -1232,7 +1233,7 @@ export default function EventBookingsPage() {
                       value={form.quotedPrice}
                       onChange={(e) => {
                         setForm((f) => ({ ...f, quotedPrice: e.target.value }));
-                        setFieldErrors((e) => ({ ...e, quotedPrice: undefined }));
+                        setFieldErrors((e) => ({ ...e, quotedPrice: "" }));
                       }}
                       placeholder="Auto-filled when hall and dates are set"
                       error={fieldErrors.quotedPrice}
@@ -1297,7 +1298,7 @@ export default function EventBookingsPage() {
                   value={form.specialRequests}
                   onChange={(e) => {
                     setForm((f) => ({ ...f, specialRequests: e.target.value }));
-                    setFieldErrors((e) => ({ ...e, specialRequests: undefined }));
+                    setFieldErrors((e) => ({ ...e, specialRequests: "" }));
                   }}
                   placeholder="Optional notes or special requests…"
                   rows={2}

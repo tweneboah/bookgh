@@ -246,7 +246,7 @@ export default function BarStockControlPage() {
       const s = String(v ?? "");
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const csv = [header.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
+    const csv = [header.map(esc).join(","), ...rows.map((r: string[]) => r.map(esc).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);

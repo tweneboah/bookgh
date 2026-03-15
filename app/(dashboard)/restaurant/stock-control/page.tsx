@@ -1501,7 +1501,7 @@ export default function RestaurantStockControlPage() {
                   <div>
                     <dt className="text-slate-500 font-medium">Receipt type</dt>
                     <dd className="text-slate-900 mt-0.5">
-                      <Badge variant="secondary" className="rounded-md">{selectedReceiptGroup.receiptType}</Badge>
+                      <Badge variant="default" className="rounded-md">{selectedReceiptGroup.receiptType}</Badge>
                     </dd>
                   </div>
                   <div>
@@ -1591,7 +1591,7 @@ export default function RestaurantStockControlPage() {
                         <td className="px-4 py-3 text-slate-700">{group.poNumber || "—"}</td>
                         <td className="px-4 py-3 text-slate-600 max-w-[140px] truncate" title={group.deliveryNote}>{group.deliveryNote || "—"}</td>
                         <td className="px-4 py-3">
-                          <Badge variant="secondary" className="rounded-md text-xs">{group.receiptType}</Badge>
+                          <Badge variant="default" className="rounded-md text-xs">{group.receiptType}</Badge>
                         </td>
                         <td className="px-4 py-3 text-slate-700">{group.lines.length}</td>
                         <td className="px-4 py-3 text-slate-700">{Number(group.totalUnits).toFixed(3)}</td>
@@ -1715,7 +1715,7 @@ export default function RestaurantStockControlPage() {
                   <div>
                     <dt className="text-slate-500 font-medium">Movement type</dt>
                     <dd className="text-slate-900 mt-0.5">
-                      <Badge variant="secondary" className="rounded-md capitalize">{String(selectedMovement.movementType)}</Badge>
+                      <Badge variant="default" className="rounded-md capitalize">{String(selectedMovement.movementType)}</Badge>
                     </dd>
                   </div>
                   <div>

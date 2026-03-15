@@ -313,7 +313,7 @@ export default function ConferenceOverviewPage() {
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          <Badge variant="secondary" className="text-xs font-medium">
+                          <Badge variant="default" className="text-xs font-medium">
                             {b.status}
                           </Badge>
                           <Link

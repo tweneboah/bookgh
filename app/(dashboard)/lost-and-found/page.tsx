@@ -128,7 +128,7 @@ export default function LostAndFoundPage() {
           value: id,
           label: `${r.roomNumber ?? id}${r.roomCategoryId?.name ? ` · ${r.roomCategoryId.name}` : ""}`,
         };
-      }).filter((o) => o.value),
+      }).filter((o: { value: string; label: string }) => o.value),
     [rooms]
   );
 

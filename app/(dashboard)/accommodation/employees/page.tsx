@@ -25,7 +25,7 @@ import toast from "react-hot-toast";
 import { format } from "date-fns";
 import { USER_ROLES, ACCOMMODATION_ROLE_MATRIX } from "@/constants";
 
-const ACCOMMODATION_ROLES = new Set(ACCOMMODATION_ROLE_MATRIX.map((r) => r.role));
+const ACCOMMODATION_ROLES = new Set(ACCOMMODATION_ROLE_MATRIX.map((r) => r.role)) as Set<string>;
 
 function formatRoleLabel(value: string): string {
   return value

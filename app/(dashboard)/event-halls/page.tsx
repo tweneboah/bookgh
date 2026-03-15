@@ -109,22 +109,22 @@ export default function EventHallsPage() {
       capacity: item.capacity != null ? String(item.capacity) : "",
       hourlyRate: item.hourlyRate != null ? String(item.hourlyRate) : "",
       amenities: Array.isArray((item as { amenities?: string[] }).amenities)
-        ? (item as { amenities: string[] }).amenities.join(", ")
+        ? (item as { amenities?: string[] }).amenities!.join(", ")
         : "",
       layoutTypes: Array.isArray((item as { layoutTypes?: string[] }).layoutTypes)
-        ? (item as { layoutTypes: string[] }).layoutTypes.join(", ")
+        ? (item as { layoutTypes?: string[] }).layoutTypes!.join(", ")
         : "",
-      layoutTemplates: templates.map((t: { name?: string; capacity?: number; caption?: string; imageUrl?: string }) => ({
+      layoutTemplates: (templates as Array<{ name?: string; capacity?: number; caption?: string; imageUrl?: string }>).map((t) => ({
         name: t.name ?? "",
         capacity: t.capacity != null ? String(t.capacity) : "",
         caption: t.caption ?? "",
         images: t.imageUrl ? [{ url: t.imageUrl, caption: t.caption }] : [],
       })),
       images: Array.isArray((item as { images?: { url?: string; publicId?: string; caption?: string }[] }).images)
-        ? (item as { images: { url?: string; publicId?: string; caption?: string }[] }).images.map((img) => ({
-            url: img.url,
-            publicId: img.publicId,
-            caption: img.caption,
+        ? (item as { images?: { url?: string; publicId?: string; caption?: string }[] }).images!.map((img) => ({
+            url: img.url ?? "",
+            publicId: img.publicId ?? "",
+            caption: img.caption ?? "",
           }))
         : [],
     });

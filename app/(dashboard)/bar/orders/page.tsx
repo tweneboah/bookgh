@@ -56,12 +56,16 @@ export default function BarOrdersPage() {
   const [menuItemId, setMenuItemId] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHOD.CASH);
+  const [paymentMethod, setPaymentMethod] = useState<string>(PAYMENT_METHOD.CASH);
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<any>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [lastCapturedReceipt, setLastCapturedReceipt] = useState<any>(null);
-  const [paymentForm, setPaymentForm] = useState({
+  const [paymentForm, setPaymentForm] = useState<{
+    method: string;
+    amountTendered: string;
+    reference: string;
+  }>({
     method: PAYMENT_METHOD.CASH,
     amountTendered: "",
     reference: "",
@@ -709,7 +713,7 @@ export default function BarOrdersPage() {
                 <label className="text-sm font-medium text-slate-700">Method</label>
                 <AppReactSelect
                   value={paymentMethod}
-                  onChange={setPaymentMethod}
+                  onChange={(v) => setPaymentMethod(v ?? PAYMENT_METHOD.CASH)}
                   options={PAYMENT_METHOD_OPTIONS}
                 />
               </div>

@@ -82,7 +82,7 @@ export default function EventBookingPaymentsPage() {
   const payments = (paymentsData?.data ?? []) as PaymentRow[];
 
   const [amount, setAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHOD.CASH);
+  const [paymentMethod, setPaymentMethod] = useState<string>(PAYMENT_METHOD.CASH);
   const [type, setType] = useState<"deposit" | "finalSettlement">("deposit");
   const [notes, setNotes] = useState("");
 
@@ -332,7 +332,7 @@ export default function EventBookingPaymentsPage() {
                 <AppReactSelect
                   label="Method"
                   value={paymentMethod}
-                  onChange={(v) => setPaymentMethod((v as string) ?? PAYMENT_METHOD.CASH)}
+                  onChange={(v) => setPaymentMethod(v ?? PAYMENT_METHOD.CASH)}
                   options={PAYMENT_METHOD_OPTIONS}
                 />
                 <AppReactSelect

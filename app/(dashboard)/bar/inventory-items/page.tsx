@@ -409,7 +409,11 @@ export default function BarInventoryItemsPage() {
   const applyTemplate = (templateKey: string) => {
     const template = INVENTORY_TEMPLATES.find((item) => item.key === templateKey);
     if (!template) return;
-    setForm(template.values);
+    setForm({
+      ...defaultForm,
+      ...template.values,
+      totalAmountEntered: "",
+    });
     toast.success(`${template.label} template applied`);
   };
 
@@ -728,7 +732,6 @@ export default function BarInventoryItemsPage() {
                 <div className="space-y-1.5">
                   <LabelWithInfo id="bar-inv-category" label="Category" infoKey="category" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
                   <AppReactSelect
-                    id="bar-inv-category"
                     value={form.category}
                     onChange={(v) => setForm((f) => ({ ...f, category: v ?? "" }))}
                     options={categoryOptions}

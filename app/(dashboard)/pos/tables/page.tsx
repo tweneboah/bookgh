@@ -28,7 +28,7 @@ const SERVER_ROLES = new Set([
   USER_ROLES.CASHIER,
   USER_ROLES.SUPERVISOR,
   USER_ROLES.RESTAURANT_MANAGER,
-]);
+]) as Set<string>;
 
 const STATUS_OPTIONS = Object.entries(POS_TABLE_STATUS).map(([k, v]) => ({
   value: v,

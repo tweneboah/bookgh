@@ -330,7 +330,6 @@ export default function CorporateAccountsPage() {
                                   id: "delete",
                                   label: "Delete",
                                   onClick: () => setShowDelete(row._id),
-                                  className: "text-red-600",
                                 },
                               ]}
                             />
@@ -368,7 +367,6 @@ export default function CorporateAccountsPage() {
                               id: "delete",
                               label: "Delete",
                               onClick: () => setShowDelete(row._id),
-                              className: "text-red-600",
                             },
                           ]}
                         />
@@ -568,7 +566,7 @@ export default function CorporateAccountsPage() {
                     <label className="mb-1.5 block text-sm font-medium text-slate-700">Contract start</label>
                     <ReactDatePicker
                       selected={form.contractStartDate ? new Date(form.contractStartDate) : null}
-                      onChange={(d) =>
+                      onChange={(d: Date | null) =>
                         setForm((f) => ({
                           ...f,
                           contractStartDate: d ? d.toISOString().slice(0, 10) : "",
@@ -585,7 +583,7 @@ export default function CorporateAccountsPage() {
                     <label className="mb-1.5 block text-sm font-medium text-slate-700">Contract end</label>
                     <ReactDatePicker
                       selected={form.contractEndDate ? new Date(form.contractEndDate) : null}
-                      onChange={(d) =>
+                      onChange={(d: Date | null) =>
                         setForm((f) => ({
                           ...f,
                           contractEndDate: d ? d.toISOString().slice(0, 10) : "",

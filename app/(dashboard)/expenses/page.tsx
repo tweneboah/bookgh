@@ -348,7 +348,7 @@ export default function ExpensesPage() {
       ];
       return fields.map((f) => `"${String(f).replace(/"/g, '""')}"`);
     });
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const csv = [headers.join(","), ...rows.map((r: string[]) => r.join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -494,8 +494,8 @@ export default function ExpensesPage() {
       if (editItem) {
         await updateMut.mutateAsync({
           id: editItem._id,
-          department: finalDepartment,
           ...payload,
+          department: finalDepartment,
         });
         toast.success("Expense updated");
       } else {
@@ -700,7 +700,6 @@ export default function ExpensesPage() {
               <AlertTriangle
                 className="h-3.5 w-3.5 text-[#b91c1c]"
                 aria-label="Unusually high for this category"
-                title="Unusually high for this category"
               />
             )}
           </div>
@@ -905,6 +904,7 @@ export default function ExpensesPage() {
                       paymentMethod: "",
                       receiptUrl: "",
                       notes: "",
+                      accountCode: "",
                     });
                     setEditItem(null);
                     setShowModal(true);

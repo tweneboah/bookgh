@@ -1362,10 +1362,10 @@ export default function BookingsPage() {
                   <label className="mb-1.5 block text-xs font-medium text-slate-500">Check-in</label>
                   <ReactDatePicker
                     selected={createForm.checkInDate ? new Date(createForm.checkInDate) : null}
-                    onChange={(date) =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        checkInDate: date ? toDateTimeLocal(date) : "",
+onChange={(date: Date | null) =>
+                        setCreateForm((f) => ({
+                          ...f,
+                          checkInDate: date ? toDateTimeLocal(date) : "",
                       }))
                     }
                     showTimeSelect
@@ -1382,11 +1382,11 @@ export default function BookingsPage() {
                 <div className="min-w-0 overflow-visible">
                   <label className="mb-1.5 block text-xs font-medium text-slate-500">Check-out</label>
                   <ReactDatePicker
-                    selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
-                    onChange={(date) =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        checkOutDate: date ? toDateTimeLocal(date) : "",
+selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
+                    onChange={(date: Date | null) =>
+                        setCreateForm((f) => ({
+                          ...f,
+                          checkOutDate: date ? toDateTimeLocal(date) : "",
                       }))
                     }
                     showTimeSelect
@@ -1612,7 +1612,7 @@ export default function BookingsPage() {
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Check-in</label>
                 <ReactDatePicker
                   selected={editForm.checkInDate ? new Date(editForm.checkInDate) : null}
-                  onChange={(date) =>
+                  onChange={(date: Date | null) =>
                     setEditForm((f) => ({ ...f, checkInDate: date ? toDateTimeLocal(date) : "" }))
                   }
                   showTimeSelect
@@ -1630,7 +1630,7 @@ export default function BookingsPage() {
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Check-out</label>
                 <ReactDatePicker
                   selected={editForm.checkOutDate ? new Date(editForm.checkOutDate) : null}
-                  onChange={(date) =>
+                  onChange={(date: Date | null) =>
                     setEditForm((f) => ({ ...f, checkOutDate: date ? toDateTimeLocal(date) : "" }))
                   }
                   showTimeSelect
@@ -2006,7 +2006,7 @@ export default function BookingsPage() {
                       {checkOutFolioData.data.roomCharges.map((ch: any) => (
                         <div key={ch._id} className="flex justify-between px-4 py-2 bg-amber-50/50">
                           <span className="text-slate-600">
-                            <Badge variant="secondary" className="text-xs mr-2 capitalize">
+                            <Badge variant="default" className="text-xs mr-2 capitalize">
                               {ch.chargeType?.replace(/([A-Z])/g, " $1").trim()}
                             </Badge>
                             {ch.description || ""}
@@ -2459,7 +2459,7 @@ export default function BookingsPage() {
                               {folio.roomCharges.map((ch: any) => (
                                 <tr key={ch._id} className="hover:bg-slate-50">
                                   <td className="px-3 py-2">
-                                    <Badge variant="secondary" className="capitalize text-xs">
+                                    <Badge variant="default" className="capitalize text-xs">
                                       {ch.chargeType?.replace(/([A-Z])/g, " $1").trim()}
                                     </Badge>
                                   </td>

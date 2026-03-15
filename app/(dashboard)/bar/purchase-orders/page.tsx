@@ -612,7 +612,6 @@ export default function BarPurchaseOrdersPage() {
             }}
             options={[{ value: "", label: "Select item..." }, ...itemOptions]}
             placeholder="Select BAR inventory item..."
-            required={!form.isNewItem}
           />
           {!form.isNewItem && form.inventoryItemId && (() => {
             const inv = inventoryItems.find(

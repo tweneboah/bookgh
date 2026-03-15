@@ -364,7 +364,7 @@ export default function FloorManagementPage() {
                           ? "Unassigned"
                           : floor.name || `Floor ${floor.floorNumber}`}
                       </h3>
-                      <Badge variant="secondary" className="rounded-md">{floor.totalRooms} rooms</Badge>
+                      <Badge variant="default" className="rounded-md">{floor.totalRooms} rooms</Badge>
                     </div>
                     {floor.description && (
                       <p className="text-xs text-slate-500">{floor.description}</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -16,7 +16,7 @@ const HERO_IMAGE =
 const TESTIMONIAL_AVATAR =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuC5cZwuaeCXcJljBH7nudwDknwjopx_LlxsvjFQwrmKeLs7RxxUL9iaMG0Z37uqHBPPFrR-W0Bd12ncoUCaukBrC5KINwJZYjrIzzCLgDvmbpo7b6e8D-Os17DSFUyYGwnIWva6abjUrnOgoQhSCR-M9Tt7t0RifU5tBqBjZHHmmfZw5YpfBxKkJZKl05Zx0VtBJHPcvRd19vlrQzitBb0Li8DaV-G1TmWFVJXKFDtV3lULOQZ9uxJRk9UvgLZvzL8c151IOEdc_Mwp";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectUrl = searchParams.get("redirect");
@@ -264,5 +264,13 @@ export default function LoginPage() {
         </p>
       </footer>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[#f8f6f6]">Loading…</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }
