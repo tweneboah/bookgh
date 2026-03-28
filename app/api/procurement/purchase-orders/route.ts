@@ -78,7 +78,13 @@ async function mapPayload(
     lines.reduce((sum, line) => sum + Number(line.totalCost ?? 0), 0).toFixed(2)
   );
   const taxAmount = Number(data.taxAmount ?? 0);
-  const totalAmount = Number((subtotal + taxAmount).toFixed(2));
+  const baseTotalAmount = Number((subtotal + taxAmount).toFixed(2));
+  const negotiatedTotalAmount = Number(data.negotiatedTotalAmount ?? 0);
+  const hasNegotiatedTotalAmount =
+    Number.isFinite(negotiatedTotalAmount) && negotiatedTotalAmount > 0;
+  const totalAmount = hasNegotiatedTotalAmount
+    ? Number(negotiatedTotalAmount.toFixed(2))
+    : baseTotalAmount;
   return {
     ...data,
     supplierId: toObjectId(data.supplierId),
@@ -90,6 +96,10 @@ async function mapPayload(
     lines,
     subtotal,
     totalAmount,
+    negotiatedTotalAmount: hasNegotiatedTotalAmount
+      ? Number(negotiatedTotalAmount.toFixed(2))
+      : undefined,
+    paymentDueDate: data.paymentDueDate ? new Date(data.paymentDueDate) : undefined,
   };
 }
 
@@ -176,7 +186,11 @@ export const POST = withHandler(
       action: "create",
       resource: "purchaseOrder",
       resourceId: doc._id,
-      details: { poNumber: doc.poNumber, totalAmount: doc.totalAmount },
+      details: {
+        poNumber: doc.poNumber,
+        totalAmount: doc.totalAmount,
+        supplierId: String(doc.supplierId),
+      },
     } as any);
 
     return createdResponse(doc.toObject());

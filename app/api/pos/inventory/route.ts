@@ -37,9 +37,14 @@ export const GET = withHandler(
     const filter: Record<string, unknown> = { tenantId, branchId };
     if (category) filter.category = category;
 
-    const query = InventoryItemModel.find(filter as Record<string, unknown>).sort(
+    let query = InventoryItemModel.find(filter as Record<string, unknown>).sort(
       parseSortString(sort, SORT_FIELDS)
     );
+    if (department === "restaurant") {
+      query = query
+        .populate("purchaseUnitId", "name abbreviation type")
+        .populate("yieldUnitId", "name abbreviation type");
+    }
     const countQuery = InventoryItemModel.countDocuments(
       filter as Record<string, unknown>
     );

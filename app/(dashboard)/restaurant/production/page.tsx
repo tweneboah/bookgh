@@ -6,6 +6,8 @@ import {
   useCreateProductionBatch,
   useRestaurantRecipes,
   useInventoryItems,
+  useItemYields,
+  useRestaurantUnits,
 } from "@/hooks/api";
 import {
   Badge,
@@ -21,14 +23,14 @@ import {
   StatCard,
   AppReactSelect,
 } from "@/components/ui";
-import { Plus, Info, FlaskConical, Layers, TrendingUp } from "lucide-react";
+import { Plus, Info, FlaskConical, Layers, TrendingUp, Lightbulb } from "lucide-react";
 import toast from "react-hot-toast";
 
 const PRODUCTION_FIELD_INFOS: Record<string, string> = {
   batchNumber: "Unique identifier for this batch (e.g. PB-001). Leave empty to auto-generate.",
   recipe: "The recipe used for this production run. Inputs and expected costs come from the recipe.",
-  recipeInputs: "Quantities from the recipe. Check “Override” to adjust actual quantities used for this batch.",
-  actualQty: "Actual quantity of this ingredient used in this batch. Used for cost variance and stock deduction.",
+  recipeInputs: "Chef quantities from the recipe. Check “Override” to enter what you actually used for this batch.",
+  actualQty: "Actual chef quantity used in this batch. Used for cost variance and stock deduction.",
   outputInventoryItem: "Optional: link produced quantity to an inventory item for stock tracking.",
   outputItemName: "Name of the finished product (e.g. Jollof Rice). Defaults to the recipe name.",
   quantityProduced: "How many units you produced in this batch. Same unit as Output Unit.",
@@ -73,7 +75,7 @@ function LabelWithInfo({
             <Info className="h-3 w-3" />
           </button>
           {isOpen && (
-            <div className="absolute left-0 top-full z-[100] mt-1 max-w-xs rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600 shadow-lg ring-1 ring-black/5">
+            <div className="absolute left-0 top-full z-100 mt-1 max-w-xs rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600 shadow-lg ring-1 ring-black/5">
               {info}
             </div>
           )}
@@ -146,18 +148,89 @@ export default function ProductionBatchesPage() {
     limit: "500",
     department: "restaurant",
   });
+  const { data: yieldsData } = useItemYields({ limit: "500" });
+  const { data: unitsData } = useRestaurantUnits({ limit: "200", active: "true" });
   const createMut = useCreateProductionBatch();
 
   const rows = data?.data ?? [];
   const pagination = data?.meta?.pagination;
   const recipes = recipesData?.data ?? [];
   const inventoryItems = inventoryData?.data ?? [];
+  const yieldMappings = yieldsData?.data ?? [];
+  const restaurantUnits = unitsData?.data ?? [];
   const selectedRecipe = recipes.find((r: any) => r._id === form.recipeId);
+
+  const getUnitLabel = (unitValue: string) => {
+    const u = restaurantUnits.find((x: any) => String(x._id) === String(unitValue));
+    if (!u) return unitValue;
+    return u.abbreviation ? `${u.name} (${u.abbreviation})` : u.name;
+  };
+
+  const estimateChefUnitCost = (inventoryItemId: string, chefUnitId: string) => {
+    const inv = inventoryItems.find((i: any) => String(i._id) === String(inventoryItemId));
+    if (!inv) return null;
+    const baseUnitCost = Number(inv.unitCost ?? 0);
+    const mapping = yieldMappings.find(
+      (y: any) =>
+        String(y.inventoryItemId?._id ?? y.inventoryItemId) === String(inventoryItemId) &&
+        String(y.toUnitId?._id ?? y.toUnitId) === String(chefUnitId)
+    );
+    if (!mapping) return null;
+    const baseUnitQty = Number(mapping.baseUnitQty ?? 0);
+    const toQty = Number(mapping.toQty ?? 0);
+    if (!(baseUnitQty > 0) || !(toQty > 0)) return null;
+    const costPerYieldUnit = (baseUnitCost * baseUnitQty) / toQty;
+    return Math.round(costPerYieldUnit * 100) / 100;
+  };
+
+  const getBaseEquivalentQty = (
+    inventoryItemId: string,
+    unitValue: string,
+    qty: number
+  ): { qty: number; unit: string } | null => {
+    if (!inventoryItemId || !unitValue || !Number.isFinite(qty) || qty < 0) return null;
+    const inv = inventoryItems.find((i: any) => String(i._id) === String(inventoryItemId));
+    if (!inv) return null;
+    const baseUnit = String(inv.unit ?? "unit");
+
+    // If the entered unit already matches base unit text, equivalent is the same number.
+    if (String(unitValue).trim().toLowerCase() === baseUnit.trim().toLowerCase()) {
+      return { qty: Number(qty.toFixed(4)), unit: baseUnit };
+    }
+
+    const mapping = yieldMappings.find(
+      (y: any) =>
+        String(y.inventoryItemId?._id ?? y.inventoryItemId) === String(inventoryItemId) &&
+        String(y.toUnitId?._id ?? y.toUnitId) === String(unitValue)
+    );
+    if (!mapping) return null;
+
+    const baseUnitQty = Number(mapping.baseUnitQty ?? 0);
+    const toQty = Number(mapping.toQty ?? 0);
+    if (!(baseUnitQty > 0) || !(toQty > 0)) return null;
+
+    const baseQty = (qty * baseUnitQty) / toQty;
+    return { qty: Number(baseQty.toFixed(4)), unit: baseUnit };
+  };
+
+  const yieldUnitOptions = [
+    { value: "unit", label: "unit (default)" },
+    ...restaurantUnits
+      .filter((u: any) => u.type === "yield" || u.type === "both")
+      .map((u: any) => ({
+        value: u.name,
+        label: u.abbreviation ? `${u.name} (${u.abbreviation})` : u.name,
+      })),
+  ];
+
   const expectedInputCost = Number(
-    (selectedRecipe?.ingredients ?? []).reduce(
-      (sum: number, row: any) => sum + Number(row.totalCost ?? 0),
-      0
-    )
+    inputRows
+      .reduce((sum, row) => {
+        const expectedQty = Number(row.expectedQuantity ?? 0);
+        const unitCost = Number(row.unitCost ?? 0);
+        return sum + expectedQty * unitCost;
+      }, 0)
+      .toFixed(2)
   );
   const actualInputCost = Number(
     inputRows.reduce((sum, row) => sum + Number(row.totalCost ?? 0), 0).toFixed(2)
@@ -183,15 +256,42 @@ export default function ProductionBatchesPage() {
   );
 
   const syncRowsFromRecipe = (recipe: any) => {
-    const rowsFromRecipe = (recipe?.ingredients ?? []).map((row: any) => ({
-      inventoryItemId: String(row.inventoryItemId?._id ?? row.inventoryItemId ?? ""),
-      itemName: String(row.name ?? ""),
-      expectedQuantity: Number(row.quantity ?? 0),
-      quantityUsed: Number(row.quantity ?? 0),
-      unit: String(row.unit ?? "unit"),
-      unitCost: Number(row.unitCost ?? 0),
-      totalCost: Number(row.totalCost ?? 0),
-    }));
+    const rowsFromRecipe = (recipe?.ingredients ?? []).map((row: any) => {
+      const inventoryItemId = String(row.inventoryItemId?._id ?? row.inventoryItemId ?? "");
+      const itemName = String(row.name ?? "");
+      const chefQty = Number(row.chefQty ?? 0);
+      const chefUnitId = row.chefUnitId ? String(row.chefUnitId) : "";
+
+      // Prefer the chef-formula fields (chefUnitId/chefQty) so the batch screen stays in plain
+      // chef language. If they're missing, fall back to base-unit fields (quantity/unit).
+      if (chefQty > 0 && chefUnitId) {
+        const unitCost = estimateChefUnitCost(inventoryItemId, chefUnitId) ?? 0;
+        const totalCost = Math.round(chefQty * unitCost * 100) / 100;
+        return {
+          inventoryItemId,
+          itemName,
+          expectedQuantity: chefQty,
+          quantityUsed: chefQty,
+          unit: chefUnitId, // backend uses this to match the yield mapping (toUnitId)
+          unitCost,
+          totalCost,
+        };
+      }
+
+      const expectedQty = Number(row.quantity ?? 0);
+      const unit = String(row.unit ?? "unit");
+      const unitCost = Number(row.unitCost ?? 0);
+      const totalCost = Math.round(expectedQty * unitCost * 100) / 100;
+      return {
+        inventoryItemId,
+        itemName,
+        expectedQuantity: expectedQty,
+        quantityUsed: expectedQty,
+        unit,
+        unitCost,
+        totalCost,
+      };
+    });
     setInputRows(rowsFromRecipe);
   };
 
@@ -268,7 +368,7 @@ export default function ProductionBatchesPage() {
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="mb-1 h-1 w-12 rounded-full bg-gradient-to-r from-[#ff6d00] to-[#ff9e00]" aria-hidden />
+              <div className="mb-1 h-1 w-12 rounded-full bg-linear-to-r from-[#ff6d00] to-[#ff9e00]" aria-hidden />
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
                 Production
               </h1>
@@ -278,7 +378,7 @@ export default function ProductionBatchesPage() {
             </div>
             <Button
               onClick={() => setShowModal(true)}
-              className="h-11 shrink-0 bg-gradient-to-r from-[#ff6d00] to-[#ff9e00] font-semibold text-white shadow-md transition hover:opacity-95 focus-visible:ring-[#ff8500]"
+              className="h-11 shrink-0 bg-linear-to-r from-[#ff6d00] to-[#ff9e00] font-semibold text-white shadow-md transition hover:opacity-95 focus-visible:ring-[#ff8500]"
             >
               <Plus className="h-4 w-4" />
               New Batch
@@ -344,154 +444,190 @@ export default function ProductionBatchesPage() {
         </Card>
       </main>
 
-      <Modal open={showModal} onClose={() => setShowModal(false)} title="Create Production Batch" size="lg" className="max-h-[90vh] overflow-hidden rounded-2xl border-0 shadow-xl">
-        <form onSubmit={submit} className="overflow-hidden">
-          {/* Hero strip — brand gradient */}
-          <div className="relative -mx-6 -mt-4 mb-6 overflow-hidden rounded-t-2xl bg-gradient-to-br from-[#fff8f2] via-white to-[#f5f0ff] px-5 py-4">
-            <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#ff9e00]/20 blur-2xl" aria-hidden />
-            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#7b2cbf]/30 to-transparent" aria-hidden />
-            <div className="relative flex items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-slate-200/80">
-                <FlaskConical className="h-5 w-5 text-[#7b2cbf]" />
-              </div>
-              <p className="text-sm text-slate-600">
-                Record a production run: pick a recipe, confirm or override inputs, set output quantity and cost variance.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            {/* Batch & recipe */}
-            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Batch &amp; recipe</p>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <LabelWithInfo id="prod-batch" label="Batch Number" infoKey="batchNumber" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
-                  <Input
-                    id="prod-batch"
-                    value={form.batchNumber}
-                    onChange={(e) => setForm((f) => ({ ...f, batchNumber: e.target.value }))}
-                    placeholder="Auto-generated if empty"
-                    className="rounded-lg border-slate-200 focus-visible:ring-[#5a189a]"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <LabelWithInfo id="prod-recipe" label="Recipe" infoKey="recipe" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
-                  <AppReactSelect
-                    value={form.recipeId}
-                    options={recipeOptions}
-                    onChange={(value) => {
-                      const recipe = recipes.find((r: any) => r._id === value);
-                      syncRowsFromRecipe(recipe);
-                      setForm((f) => ({
-                        ...f,
-                        recipeId: value,
-                        recipeName: recipe?.menuItemName ?? "",
-                        outputItemName: recipe?.menuItemName ?? f.outputItemName,
-                      }));
-                    }}
-                    placeholder="Select recipe..."
-                    isClearable={false}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Recipe inputs */}
-            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="relative flex items-center gap-1.5">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recipe inputs</p>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setOpenInfoKey(openInfoKey === "recipeInputs" ? null : "recipeInputs");
-                    }}
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:border-[#5a189a] hover:bg-[#f5f0ff] hover:text-[#5a189a]"
-                    aria-label="Info: Recipe inputs"
-                  >
-                    <Info className="h-3 w-3" />
-                  </button>
-                  {openInfoKey === "recipeInputs" && (
-                    <div ref={infoPopoverRef} className="absolute left-0 top-full z-[100] mt-1 max-w-xs rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600 shadow-lg ring-1 ring-black/5">
-                      {PRODUCTION_FIELD_INFOS.recipeInputs}
-                    </div>
-                  )}
-                </div>
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={overrideInputs}
-                    onChange={(e) => setOverrideInputs(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-[#5a189a] focus:ring-[#5a189a]"
-                  />
-                  Override quantities for this batch
-                </label>
-              </div>
-              {inputRows.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-slate-200 bg-white/80 px-3 py-4 text-xs text-slate-500">
-                  Select a recipe to preview inputs.
+      <Modal open={showModal} onClose={() => setShowModal(false)} title="" size="xl" className="max-h-[94vh] overflow-hidden rounded-2xl border-0 bg-[#f7f9fb] p-0 shadow-xl">
+        <form onSubmit={submit} className="max-h-[94vh] overflow-y-auto bg-[#f7f9fb] px-6 py-6 text-[#191c1e] antialiased md:px-8 md:py-8">
+          <header className="mb-8">
+            <div className="flex flex-col gap-6">
+              <div className="space-y-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-[#ff6b00]">
+                  Production Workflow
+                </span>
+                <h1 className="text-4xl font-extrabold tracking-tight text-[#191c1e] md:text-5xl">
+                  Create Production Batch
+                </h1>
+                <p className="max-w-2xl text-lg text-[#5a4136]">
+                  Record a production run: pick a recipe, confirm or override inputs, set output
+                  quantity and cost variance.
                 </p>
-              ) : (
-                <div className="space-y-2">
-                  {inputRows.map((row, idx) => (
-                    <div
-                      key={`${row.inventoryItemId}-${idx}`}
-                      className="grid grid-cols-12 gap-2 rounded-lg border border-slate-100 bg-white p-2 text-xs shadow-sm"
-                    >
-                      <div className="col-span-4">
-                        <p className="font-medium text-slate-700">{row.itemName}</p>
-                        <p className="text-slate-500">Expected {row.expectedQuantity} {row.unit}</p>
-                      </div>
-                      <div className="col-span-3 space-y-1">
-                        <LabelWithInfo id={`prod-actual-${idx}`} label="Actual Qty" infoKey="actualQty" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
-                        <Input
-                          id={`prod-actual-${idx}`}
-                          type="number"
-                          min={0}
-                          step="0.001"
-                          value={String(row.quantityUsed)}
-                          disabled={!overrideInputs}
-                          onChange={(e) =>
-                            setInputRows((rows) =>
-                              rows.map((item, i) => {
-                                if (i !== idx) return item;
-                                const qty = Number(e.target.value || 0);
-                                return {
-                                  ...item,
-                                  quantityUsed: qty,
-                                  totalCost: Number((qty * Number(item.unitCost ?? 0)).toFixed(2)),
-                                };
-                              })
-                            )
-                          }
-                          className="rounded-lg border-slate-200 focus-visible:ring-[#5a189a]"
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <Input label="Unit" value={row.unit} disabled onChange={() => {}} className="rounded-lg" />
-                      </div>
-                      <div className="col-span-3 rounded-lg bg-slate-50 px-2 py-2 text-right">
-                        <p className="text-slate-500">Line Cost</p>
-                        <p className="font-semibold text-slate-800">{fmt(row.totalCost)}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowModal(false)}
+                  className="rounded-xl px-6 py-3 font-semibold text-[#a04100] transition-all hover:bg-[#e2bfb0]/20"
+                >
+                  Discard Draft
+                </button>
+                <Button
+                  type="submit"
+                  loading={createMut.isPending}
+                  className="rounded-xl bg-linear-to-br from-[#a04100] to-[#ff6b00] px-8 py-3 font-bold text-white shadow-[0px_12px_32px_rgba(25,28,30,0.06)] active:scale-95"
+                >
+                  Finalize Batch
+                </Button>
+              </div>
             </div>
+          </header>
 
-            {/* Output */}
-            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Output</p>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <LabelWithInfo id="prod-output-inv" label="Output Inventory Item (optional)" infoKey="outputInventoryItem" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
-                  <AppReactSelect
+          <main className="space-y-8">
+            <div className="space-y-8">
+              <section className="rounded-xl bg-white p-8 shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+                <div className="grid grid-cols-1 gap-8">
+                  <div className="space-y-2">
+                    <LabelWithInfo id="prod-batch" label="Batch Number" infoKey="batchNumber" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
+                    <Input
+                      id="prod-batch"
+                      value={form.batchNumber}
+                      onChange={(e) => setForm((f) => ({ ...f, batchNumber: e.target.value }))}
+                      placeholder="e.g. BATCH-2023-001"
+                      className="rounded-xl border-0 bg-[#f2f4f6] p-4 focus-visible:ring-2 focus-visible:ring-[#ff6b00]"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <LabelWithInfo id="prod-recipe" label="Recipe Selector" infoKey="recipe" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
+                    <select
+                      id="prod-recipe"
+                      value={form.recipeId}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        const recipe = recipes.find((r: any) => r._id === value);
+                        syncRowsFromRecipe(recipe);
+                        setForm((f) => ({
+                          ...f,
+                          recipeId: value,
+                          recipeName: recipe?.menuItemName ?? "",
+                          outputItemName: recipe?.menuItemName ?? f.outputItemName,
+                        }));
+                      }}
+                      className="w-full appearance-none rounded-xl border-0 bg-[#f2f4f6] p-4 focus:ring-2 focus:ring-[#ff6b00]"
+                    >
+                      <option value="">Select recipe...</option>
+                      {recipes.map((r: any) => (
+                        <option key={r._id} value={r._id}>
+                          {r.menuItemName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <section className="overflow-hidden rounded-xl bg-white p-8 shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+                <div className="mb-6 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold">Recipe Inputs</h2>
+                    <p className="mt-1 text-sm text-[#5a4136]">Override quantities for this batch</p>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-[#ff6b00]/10 px-3 py-2 text-xs text-[#a04100]">
+                    <input
+                      type="checkbox"
+                      checked={overrideInputs}
+                      onChange={(e) => setOverrideInputs(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-[#a04100] focus:ring-[#a04100]"
+                    />
+                    Override
+                  </label>
+                </div>
+                {inputRows.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-200 bg-[#f2f4f6] px-4 py-6 text-sm text-slate-500">
+                    Select a recipe to preview inputs.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-separate border-spacing-y-2 text-left">
+                      <thead>
+                        <tr className="text-xs uppercase tracking-wider text-[#5a4136]">
+                          <th className="px-4 pb-4">Ingredient</th>
+                          <th className="px-4 pb-4">Expected (Unit)</th>
+                          <th className="px-4 pb-4">Actual Qty</th>
+                          <th className="px-4 pb-4">Line Cost</th>
+                          <th className="px-4 pb-4 text-right">Actual Eq.</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-sm">
+                        {inputRows.map((row, idx) => {
+                          const expectedEq = getBaseEquivalentQty(
+                            row.inventoryItemId,
+                            row.unit,
+                            Number(row.expectedQuantity ?? 0)
+                          );
+                          const actualEq = getBaseEquivalentQty(
+                            row.inventoryItemId,
+                            row.unit,
+                            Number(row.quantityUsed ?? 0)
+                          );
+                          return (
+                            <tr key={`${row.inventoryItemId}-${idx}`} className="group transition-colors hover:bg-[#f2f4f6]">
+                              <td className="rounded-l-xl px-4 py-4 font-semibold">{row.itemName}</td>
+                              <td className="px-4 py-4 text-[#5a4136]">
+                                {row.expectedQuantity} {getUnitLabel(row.unit)}
+                                {expectedEq && (
+                                  <>
+                                    <br />
+                                    <span className="text-[10px] text-[#a04100]">
+                                      Eq: {expectedEq.qty} {expectedEq.unit}
+                                    </span>
+                                  </>
+                                )}
+                              </td>
+                              <td className="px-4 py-4">
+                                <input
+                                  id={`prod-actual-${idx}`}
+                                  type="number"
+                                  min={0}
+                                  step="0.001"
+                                  value={String(row.quantityUsed)}
+                                  disabled={!overrideInputs}
+                                  onChange={(e) =>
+                                    setInputRows((rows) =>
+                                      rows.map((item, i) => {
+                                        if (i !== idx) return item;
+                                        const qty = Number(e.target.value || 0);
+                                        return {
+                                          ...item,
+                                          quantityUsed: qty,
+                                          totalCost: Number((qty * Number(item.unitCost ?? 0)).toFixed(2)),
+                                        };
+                                      })
+                                    )
+                                  }
+                                  className="w-20 rounded-lg border-0 bg-[#f2f4f6] p-2 text-center focus:ring-1 focus:ring-[#ff6b00]"
+                                />
+                              </td>
+                              <td className="px-4 py-4 font-medium">{fmt(row.totalCost)}</td>
+                              <td className="rounded-r-xl px-4 py-4 text-right font-bold">
+                                {actualEq ? `${actualEq.qty} ${actualEq.unit}` : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="grid grid-cols-1 gap-8 rounded-xl bg-white p-8 shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+                <div className="col-span-full mb-1">
+                  <h2 className="text-xl font-bold">Output Configuration</h2>
+                </div>
+                <div className="space-y-2">
+                  <LabelWithInfo id="prod-output-inv" label="Output Inventory Item (Optional)" infoKey="outputInventoryItem" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
+                  <select
+                    id="prod-output-inv"
                     value={form.outputInventoryItemId}
-                    options={inventoryOptions}
-                    onChange={(value) => {
+                    onChange={(e) => {
+                      const value = e.target.value;
                       const item = inventoryItems.find((i: any) => i._id === value);
                       setForm((f) => ({
                         ...f,
@@ -500,17 +636,27 @@ export default function ProductionBatchesPage() {
                         outputUnit: item?.unit ?? f.outputUnit,
                       }));
                     }}
-                    placeholder="Select inventory item..."
-                    isClearable
+                    className="w-full rounded-xl border-0 bg-[#f2f4f6] p-4 focus:ring-2 focus:ring-[#ff6b00]"
+                  >
+                    <option value="">Link to Existing Inventory...</option>
+                    {inventoryItems.map((i: any) => (
+                      <option key={i._id} value={i._id}>
+                        {i.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <LabelWithInfo id="prod-output-name" label="Output Name" infoKey="outputItemName" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
+                  <Input
+                    id="prod-output-name"
+                    value={form.outputItemName}
+                    onChange={(e) => setForm((f) => ({ ...f, outputItemName: e.target.value }))}
+                    required
+                    className="rounded-xl border-0 bg-[#f2f4f6] p-4 focus-visible:ring-2 focus-visible:ring-[#ff6b00]"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <LabelWithInfo id="prod-output-name" label="Output Name" infoKey="outputItemName" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
-                  <Input id="prod-output-name" value={form.outputItemName} onChange={(e) => setForm((f) => ({ ...f, outputItemName: e.target.value }))} required className="rounded-lg border-slate-200 focus-visible:ring-[#5a189a]" />
-                </div>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <LabelWithInfo id="prod-qty" label="Quantity Produced" infoKey="quantityProduced" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
                   <Input
                     id="prod-qty"
@@ -520,71 +666,129 @@ export default function ProductionBatchesPage() {
                     value={form.quantityProduced}
                     onChange={(e) => setForm((f) => ({ ...f, quantityProduced: e.target.value }))}
                     required
-                    className="rounded-lg border-slate-200 focus-visible:ring-[#5a189a]"
+                    className="rounded-xl border-0 bg-[#f2f4f6] p-4 focus-visible:ring-2 focus-visible:ring-[#ff6b00]"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <LabelWithInfo id="prod-unit" label="Output Unit (from item)" infoKey="outputUnit" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
+                <div className="space-y-2">
+                  <LabelWithInfo id="prod-unit" label="Output Unit" infoKey="outputUnit" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
                   {form.outputInventoryItemId ? (
-                    <div
-                      className="flex h-10 w-full items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700"
-                      title="Unit from output item (same unit everywhere)"
-                    >
-                      {form.outputUnit || inventoryItems.find((i: any) => String(i._id) === String(form.outputInventoryItemId))?.unit || "—"}
-                    </div>
+                    <input
+                      readOnly
+                      value={
+                        form.outputUnit ||
+                        inventoryItems.find(
+                          (i: any) => String(i._id) === String(form.outputInventoryItemId)
+                        )?.unit ||
+                        "unit"
+                      }
+                      className="w-full rounded-xl border-0 bg-[#f2f4f680] p-4 text-[#5a4136]"
+                    />
                   ) : (
-                    <div className="flex h-10 w-full items-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 px-3 text-sm text-slate-400">
-                      Select output item
-                    </div>
+                    <select
+                      id="prod-unit"
+                      value={form.outputUnit}
+                      onChange={(e) => setForm((f) => ({ ...f, outputUnit: e.target.value }))}
+                      className="w-full rounded-xl border-0 bg-[#f2f4f6] p-4 focus:ring-2 focus:ring-[#ff6b00]"
+                    >
+                      {yieldUnitOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
+                <div className="col-span-full space-y-2">
+                  <LabelWithInfo id="prod-notes" label="Production Notes" infoKey="notes" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
+                  <Textarea
+                    id="prod-notes"
+                    value={form.notes}
+                    onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                    rows={3}
+                    placeholder="Add observations about texture, flavor, or equipment performance..."
+                    className="rounded-xl border-0 bg-[#f2f4f6] p-4 focus-visible:ring-2 focus-visible:ring-[#ff6b00]"
+                  />
+                </div>
+              </section>
+            </div>
+
+            <aside className="space-y-6">
+              <div className="rounded-xl border-t-4 border-[#ff6b00] bg-white p-8 shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+                <h3 className="mb-6 flex items-center gap-2 text-lg font-bold">
+                  <TrendingUp className="h-4 w-4 text-[#a04100]" />
+                  Economics Summary
+                </h3>
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between border-b border-[#eceef0] pb-4">
+                    <span className="font-medium text-[#5a4136]">Expected Input Cost</span>
+                    <span className="text-lg font-bold">{fmt(expectedInputCost)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-[#eceef0] pb-4">
+                    <span className="font-medium text-[#5a4136]">Actual Input Cost</span>
+                    <span className="text-lg font-bold">{fmt(actualInputCost)}</span>
+                  </div>
+                  <div className="space-y-1 rounded-xl bg-[#ffdad6]/40 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase text-[#93000a]">
+                        Input Cost Variance
+                      </span>
+                      <TrendingUp className="h-4 w-4 text-[#ba1a1a]" />
+                    </div>
+                    <div className="flex items-end justify-between gap-2">
+                      <span className="text-2xl font-black text-[#ba1a1a]">
+                        {fmt(inputCostVariance)}
+                      </span>
+                      <span className="rounded-full bg-[#ba1a1a] px-2 py-1 text-[10px] font-bold text-white">
+                        {inputVarianceTag.label.toUpperCase()} ({inputVariancePct.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+                  <div className="space-y-1 rounded-xl bg-[#059eff]/10 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase text-[#003357]">
+                        Unit Cost Variance
+                      </span>
+                      <Badge variant={unitVarianceTag.variant}>{unitVarianceTag.label}</Badge>
+                    </div>
+                    <div className="flex items-end justify-between gap-2">
+                      <span className="text-2xl font-black text-[#0062a1]">
+                        {fmt(unitCostVariance)}
+                      </span>
+                      <span className="rounded-full bg-[#0062a1] px-2 py-1 text-[10px] font-bold text-white">
+                        {unitVarianceTag.label.toUpperCase()} ({unitVariancePct.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-8 pt-6">
+                  <div className="group relative aspect-video overflow-hidden rounded-xl">
+                    <img
+                      src="https://lh3.googleusercontent.com/aida-public/AB6AXuAo8ebw9STjahro_-_NuD7VuObxsC3OfhuFEeqW-SaBv7F7M3jCS6x_3LU669JSwRsqGv6B8cYf5usg_E0YH8_Mb-rgR-5QM6LUGgVR-EgMlf8OaW0SL3B0U-NUfzcCfvcwGxpf2dKB0dVf1zMHqBe7u18WOs84mxgw3rQr1gTrQTZPHl9wJUPh0U9idxnxThfv4lQOs6Zdsg_ZI3PnKEKw2exRB7sJRJI-qB4JddL5s1K0s032p1ifLlA9010PFGvoEf-FlFsZApa0"
+                      alt="Kitchen Context"
+                      className="h-full w-full object-cover brightness-75 transition-transform duration-700 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 flex items-end bg-linear-to-t from-black/60 to-transparent p-4">
+                      <p className="text-xs italic text-white">
+                        Standardized production ensures predictable margins.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-
-            {/* Notes */}
-            <div className="space-y-1.5">
-              <LabelWithInfo id="prod-notes" label="Notes" infoKey="notes" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
-              <Textarea id="prod-notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={3} className="rounded-lg border-slate-200 focus-visible:ring-[#5a189a]" />
-            </div>
-
-            {/* Variance summary */}
-            <div className="grid grid-cols-1 gap-2 rounded-xl border border-[#e9e0f5] bg-gradient-to-br from-[#faf8ff] to-white p-4 text-xs sm:grid-cols-2">
-              <p className="text-slate-700">
-                Expected Input Cost: <span className="font-semibold">{fmt(expectedInputCost)}</span>
-              </p>
-              <p className="text-slate-700">
-                Actual Input Cost: <span className="font-semibold">{fmt(actualInputCost)}</span>
-              </p>
-              <p className="flex flex-wrap items-center gap-2 text-slate-700">
-                Input Cost Variance: <span className="font-semibold">{fmt(inputCostVariance)}</span>
-                <Badge variant={inputVarianceTag.variant} title={`Variance: ${inputVariancePct.toFixed(2)}%`}>
-                  {inputVarianceTag.label}
-                </Badge>
-                <span className="text-slate-500">({inputVariancePct.toFixed(2)}%)</span>
-              </p>
-              <p className="flex flex-wrap items-center gap-2 text-slate-700">
-                Unit Cost Variance: <span className="font-semibold">{fmt(unitCostVariance)}</span>
-                <Badge variant={unitVarianceTag.variant} title={`Variance: ${unitVariancePct.toFixed(2)}%`}>
-                  {unitVarianceTag.label}
-                </Badge>
-                <span className="text-slate-500">({unitVariancePct.toFixed(2)}%)</span>
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
-              <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="rounded-lg border-slate-200">
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                loading={createMut.isPending}
-                className="rounded-lg bg-gradient-to-r from-[#ff6d00] to-[#ff9e00] font-semibold text-white shadow-md hover:opacity-95 focus-visible:ring-[#ff8500]"
-              >
-                Create Batch
-              </Button>
-            </div>
-          </div>
+              <div className="flex items-center gap-4 rounded-xl bg-[#f2f4f6] p-6">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#ff6b00] text-white">
+                  <Lightbulb className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold">Chef Tip</h4>
+                  <p className="text-xs text-[#5a4136]">
+                    Over-usage of chicken breast noticed in this batch. Consider recalibrating
+                    serve portions.
+                  </p>
+                </div>
+              </div>
+            </aside>
+          </main>
         </form>
       </Modal>
     </div>

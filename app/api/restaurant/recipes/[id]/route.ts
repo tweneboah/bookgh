@@ -7,7 +7,8 @@ import { updateRecipeSchema } from "@/validations/restaurant";
 import { writeActivityLog } from "@/lib/activity-log";
 import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
 import { getRecipeModelForDepartment } from "@/lib/department-restaurant";
-import { convertToBaseUnitQuantity } from "@/lib/unit-conversion";
+import { convertToBaseUnitQuantity, buildYieldMap, convertChefQtyToBaseQty } from "@/lib/unit-conversion";
+import ItemYield from "@/models/restaurant/ItemYield";
 
 const RESTAURANT_ROLES = [
   USER_ROLES.TENANT_ADMIN,
@@ -59,28 +60,61 @@ export const PATCH = withHandler(
       branchId,
     } as any).lean();
     const inventoryMap = new Map(inventoryItems.map((item: any) => [String(item._id), item]));
+
+    const yieldDocs = await ItemYield.find({ tenantId, branchId, inventoryItemId: { $in: inventoryIds } } as any)
+      .populate("fromUnitId", "name abbreviation")
+      .populate("toUnitId", "name abbreviation")
+      .lean();
+    const yieldMap = buildYieldMap(yieldDocs as any[]);
+
     const ingredients = incomingIngredients.map((row) => {
       const inventory = inventoryMap.get(String(row.inventoryItemId));
       if (!inventory) {
         throw new NotFoundError(`Inventory item ${String(row.inventoryItemId)}`);
       }
-      const converted = convertToBaseUnitQuantity({
-        item: inventory,
-        quantity: Number(row.quantity ?? 0),
-        enteredUnit: String(row.unit ?? inventory.unit ?? "unit"),
-      });
-      if (!converted) {
-        throw new BadRequestError(
-          `Unit '${row.unit}' is not configured for ${inventory.name}. Base unit is ${inventory.unit}.`
-        );
+
+      let baseQuantity: number;
+      let baseUnit: string;
+
+      if (row.chefUnitId && row.chefQty != null && row.chefQty > 0) {
+        const chefConverted = convertChefQtyToBaseQty({
+          inventoryItemId: String(row.inventoryItemId),
+          chefQty: row.chefQty,
+          chefUnitIdOrName: row.chefUnitId,
+          item: inventory,
+          yieldMap,
+        });
+        if (chefConverted != null) {
+          baseQuantity = chefConverted;
+          baseUnit = String(inventory.unit ?? "unit");
+        } else {
+          baseQuantity = 0;
+          baseUnit = String(inventory.unit ?? "unit");
+        }
+      } else {
+        const converted = convertToBaseUnitQuantity({
+          item: inventory,
+          quantity: Number(row.quantity ?? 0),
+          enteredUnit: String(row.unit ?? inventory.unit ?? "unit"),
+        });
+        if (!converted) {
+          throw new BadRequestError(
+            `Unit '${row.unit}' is not configured for ${inventory.name}. Base unit is ${inventory.unit}.`
+          );
+        }
+        baseQuantity = converted.baseQuantity;
+        baseUnit = converted.baseUnit;
       }
+
       const unitCost = Number(inventory.unitCost ?? row.unitCost ?? 0);
-      const totalCost = Number((converted.baseQuantity * unitCost).toFixed(2));
+      const totalCost = Number((baseQuantity * unitCost).toFixed(2));
       return {
         inventoryItemId: row.inventoryItemId,
         name: String(inventory.name ?? row.name ?? "Ingredient"),
-        quantity: converted.baseQuantity,
-        unit: converted.baseUnit,
+        quantity: baseQuantity,
+        unit: baseUnit,
+        chefUnitId: row.chefUnitId || undefined,
+        chefQty: row.chefQty != null && row.chefQty > 0 ? row.chefQty : undefined,
         unitCost,
         totalCost,
       };

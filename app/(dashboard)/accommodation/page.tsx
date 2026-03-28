@@ -2,174 +2,381 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle, Button } from "@/components/ui";
+import { Manrope } from "next/font/google";
 import { useBookings, useRooms, useRoomCategories } from "@/hooks/api";
-import {
-  BedDouble,
-  Gauge,
-  Calendar,
-  Building2,
-  Users,
-  Layers,
-  Tags,
-  Briefcase,
-  Sparkles,
-  Wrench,
-  BarChart3,
-  CreditCard,
-  Receipt,
-  PieChart,
-  ArrowRight,
-  Square,
-  Search,
-  ShieldCheck,
-} from "lucide-react";
+import { cn } from "@/lib/cn";
 
-const quickLinks = [
-  { href: "/front-desk-board", label: "Front Desk Board", icon: Gauge, color: "text-[#ff6d00]" },
-  { href: "/bookings", label: "Bookings", icon: Calendar, color: "text-[#5a189a]" },
-  { href: "/accommodation/roles", label: "Staff & roles", icon: ShieldCheck, color: "text-[#7b2cbf]" },
-  { href: "/accommodation/employees", label: "Employees", icon: Users, color: "text-[#ff6d00]" },
-  { href: "/bookings/calendar", label: "Booking Calendar", icon: Calendar, color: "text-[#7b2cbf]" },
-  { href: "/rooms", label: "Rooms", icon: BedDouble, color: "text-[#5a189a]" },
-  { href: "/rooms/floors", label: "Floors", icon: Building2, color: "text-slate-600" },
-  { href: "/guests", label: "Guests", icon: Users, color: "text-[#9d4edd]" },
-  { href: "/room-categories", label: "Room Categories", icon: Layers, color: "text-[#5a189a]" },
-  { href: "/pricing-rules?department=accommodation", label: "Pricing Rules", icon: Tags, color: "text-[#ff6d00]" },
-  { href: "/corporate-accounts", label: "Corporate Accounts", icon: Briefcase, color: "text-slate-600" },
-  { href: "/housekeeping", label: "Housekeeping", icon: Sparkles, color: "text-[#9d4edd]" },
-  { href: "/maintenance", label: "Maintenance", icon: Wrench, color: "text-amber-600" },
-  { href: "/assets", label: "Assets", icon: Square, color: "text-slate-600" },
-  { href: "/lost-and-found", label: "Lost & Found", icon: Search, color: "text-slate-600" },
-  { href: "/reports/accommodation", label: "Accommodation Reports", icon: BarChart3, color: "text-emerald-600" },
-  { href: "/payments?department=accommodation", label: "Payments", icon: CreditCard, color: "text-blue-600" },
-  { href: "/expenses?department=accommodation", label: "Expenses", icon: Receipt, color: "text-amber-600" },
-  { href: "/reports/department?department=accommodation", label: "Accounting", icon: PieChart, color: "text-cyan-600" },
-];
+const manrope = Manrope({
+  subsets: ["latin"],
+  weight: ["400", "600", "700", "800"],
+  variable: "--font-accommodation-manrope",
+  display: "swap",
+});
 
-function MetricCard({
-  label,
-  value,
-  icon: Icon,
-  iconBg,
-  iconColor,
+function MsIcon({
+  name,
+  className,
+  filled,
 }: {
-  label: string;
-  value: string | number;
-  icon: typeof BedDouble;
-  iconBg: string;
-  iconColor: string;
+  name: string;
+  className?: string;
+  filled?: boolean;
 }) {
   return (
-    <Card className="border-slate-100 bg-white shadow-sm">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
-          </div>
-          <div className={`rounded-xl p-2.5 ${iconBg}`}>
-            <Icon className={`h-5 w-5 ${iconColor}`} />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <span
+      className={cn("material-symbols-outlined inline-flex select-none", className)}
+      style={filled ? { fontVariationSettings: "'FILL' 1" } : undefined}
+      aria-hidden
+    >
+      {name}
+    </span>
   );
 }
 
-export default function AccommodationOverviewPage() {
-  const bookingsParams = useMemo(() => ({ limit: "1", page: "1" }), []);
-  const roomsParams = useMemo(() => ({ limit: "1", page: "1" }), []);
-  const categoriesParams = useMemo(() => ({ limit: "1", page: "1" }), []);
+type OpCard = {
+  icon: string;
+  title: string;
+  description: string;
+  href: string;
+};
 
-  const { data: bookingsData } = useBookings(bookingsParams);
-  const { data: roomsData } = useRooms(roomsParams);
-  const { data: categoriesData } = useRoomCategories(categoriesParams);
+const operationCards: OpCard[] = [
+  {
+    icon: "dashboard_customize",
+    title: "Front Desk Board",
+    description: "Real-time room status",
+    href: "/front-desk-board",
+  },
+  {
+    icon: "calendar_month",
+    title: "Booking Calendar",
+    description: "Schedule & availability",
+    href: "/bookings/calendar",
+  },
+  {
+    icon: "book_online",
+    title: "Bookings",
+    description: "Manage reservations",
+    href: "/bookings",
+  },
+  {
+    icon: "door_front",
+    title: "Rooms",
+    description: "Inventory management",
+    href: "/rooms",
+  },
+  {
+    icon: "layers",
+    title: "Floors",
+    description: "Physical structure",
+    href: "/rooms/floors",
+  },
+  {
+    icon: "person_search",
+    title: "Guests",
+    description: "Profiles & history",
+    href: "/guests",
+  },
+  {
+    icon: "hotel_class",
+    title: "Room Categories",
+    description: "Suite configurations",
+    href: "/room-categories",
+  },
+  {
+    icon: "gavel",
+    title: "Pricing Rules",
+    description: "Dynamic rate engine",
+    href: "/pricing-rules?department=accommodation",
+  },
+  {
+    icon: "cleaning_services",
+    title: "Housekeeping",
+    description: "Status & assignments",
+    href: "/housekeeping",
+  },
+  {
+    icon: "build",
+    title: "Maintenance",
+    description: "Repairs & tickets",
+    href: "/maintenance",
+  },
+  {
+    icon: "inventory",
+    title: "Assets",
+    description: "Property inventory",
+    href: "/assets",
+  },
+  {
+    icon: "search_off",
+    title: "Lost & Found",
+    description: "Guest item tracking",
+    href: "/lost-and-found",
+  },
+  {
+    icon: "analytics",
+    title: "Accommodation Reports",
+    description: "KPIs & analytics",
+    href: "/reports/accommodation",
+  },
+];
+
+const staffLinks = [
+  { icon: "manage_accounts", title: "Staff & Roles", href: "/accommodation/roles" },
+  { icon: "group", title: "Employees", href: "/accommodation/employees" },
+  { icon: "corporate_fare", title: "Corporate Accounts", href: "/corporate-accounts" },
+];
+
+const financeLinks = [
+  { icon: "payments", title: "Payments", href: "/payments?department=accommodation" },
+  { icon: "receipt_long", title: "Expenses", href: "/expenses?department=accommodation" },
+  {
+    icon: "account_balance_wallet",
+    title: "Accounting",
+    href: "/reports/department?department=accommodation",
+  },
+];
+
+export default function AccommodationOverviewPage() {
+  const metaParams = useMemo(() => ({ limit: "1", page: "1" }), []);
+  const weeklyParams = useMemo(() => ({ limit: "400", page: "1" }), []);
+
+  const { data: bookingsData } = useBookings(metaParams);
+  const { data: bookingsForWeek } = useBookings(weeklyParams);
+  const { data: roomsData } = useRooms(metaParams);
+  const { data: categoriesData } = useRoomCategories(metaParams);
 
   const totalBookings = bookingsData?.meta?.pagination?.total ?? 0;
   const totalRooms = roomsData?.meta?.pagination?.total ?? 0;
   const totalCategories = categoriesData?.meta?.pagination?.total ?? 0;
 
+  const weeklyBookingsCount = useMemo(() => {
+    const list = (bookingsForWeek?.data ?? []) as Array<{ createdAt?: string }>;
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - 7);
+    weekStart.setHours(0, 0, 0, 0);
+    return list.filter((b) => b.createdAt && new Date(b.createdAt) >= weekStart).length;
+  }, [bookingsForWeek]);
+
   return (
-    <div className="min-h-screen bg-white">
-      <div className="relative overflow-hidden rounded-2xl border border-slate-100 bg-gradient-to-br from-orange-50/80 via-white to-purple-50/50 px-6 py-6 shadow-sm">
-        <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-[#ff6d00]/10 blur-2xl" aria-hidden />
-        <div className="absolute bottom-0 left-1/2 h-24 w-48 -translate-x-1/2 rounded-full bg-[#5a189a]/10 blur-2xl" aria-hidden />
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-white shadow-sm">
-              <BedDouble className="h-7 w-7 text-[#5a189a]" />
+    <div
+      className={cn(
+        manrope.variable,
+        "relative min-h-full bg-[#f7f9fb] pb-12 font-sans text-[#191c1e]"
+      )}
+      style={{ fontFamily: "Inter, system-ui, sans-serif" }}
+    >
+      <div className="pointer-events-none fixed right-0 top-0 -z-10 h-[500px] w-[500px] rounded-full bg-[#a04100]/5 opacity-50 blur-3xl" />
+      <div className="pointer-events-none fixed bottom-0 left-0 -z-10 h-[300px] w-[300px] rounded-full bg-[#059eff]/5 opacity-30 blur-3xl lg:left-64" />
+
+      <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        {/* Header */}
+        <section className="mb-10 flex flex-col justify-end gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <nav className="mb-2 flex gap-2 text-[11px] font-bold uppercase tracking-widest text-[#5a4136]">
+              <span>Main</span>
+              <span className="text-[#e2bfb0]">/</span>
+              <span className="text-[#a04100]">Accommodation</span>
+            </nav>
+            <h1
+              className={cn(
+                manrope.className,
+                "text-3xl font-extrabold tracking-tight text-[#191c1e] sm:text-4xl"
+              )}
+            >
+              Accommodation Overview
+            </h1>
+          </div>
+          <Link
+            href="/bookings"
+            className={cn(
+              manrope.className,
+              "inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#a04100] to-[#ff6b00] px-6 py-3 text-sm font-bold text-white shadow-lg shadow-[#a04100]/10 transition-all hover:shadow-[#a04100]/20 active:scale-95"
+            )}
+          >
+            <MsIcon name="add_circle" className="text-xl" />
+            New Booking
+          </Link>
+        </section>
+
+        {/* Stats */}
+        <section className="mb-12 grid grid-cols-1 gap-6 md:grid-cols-3">
+          <div className="group flex h-40 flex-col justify-between rounded-[1.5rem] bg-white p-6 shadow-sm transition-all hover:bg-[#f7f9fb] hover:shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+            <div className="flex items-start justify-between">
+              <span className="rounded-lg bg-orange-50 p-2 text-[#a04100]">
+                <MsIcon name="meeting_room" />
+              </span>
+              <span className="rounded-full bg-[#059eff]/20 px-2 py-1 text-[10px] font-bold uppercase text-[#003357]">
+                Live Status
+              </span>
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Accommodation</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                Rooms, bookings, guests, pricing rules, housekeeping, and reports.
+              <p
+                className={cn(
+                  manrope.className,
+                  "text-4xl font-extrabold text-[#191c1e] transition-colors group-hover:text-[#a04100]"
+                )}
+              >
+                {totalRooms}
               </p>
+              <p className="text-sm font-medium text-[#5a4136]">Total Rooms</p>
             </div>
           </div>
-          <Button asChild className="w-fit bg-[#ff6d00] text-white hover:bg-[#e56300]">
-            <Link href="/bookings">
-              New booking
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
-        </div>
-      </div>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="Total rooms"
-          value={totalRooms}
-          icon={BedDouble}
-          iconBg="bg-[#5a189a]/10"
-          iconColor="text-[#5a189a]"
-        />
-        <MetricCard
-          label="Room categories"
-          value={totalCategories}
-          icon={Layers}
-          iconBg="bg-purple-100"
-          iconColor="text-[#7b2cbf]"
-        />
-        <MetricCard
-          label="Total bookings"
-          value={totalBookings}
-          icon={Calendar}
-          iconBg="bg-orange-100"
-          iconColor="text-[#ff6d00]"
-        />
-        <MetricCard
-          label="Quick actions"
-          value="Pricing & reports"
-          icon={BarChart3}
-          iconBg="bg-slate-100"
-          iconColor="text-slate-600"
-        />
-      </div>
+          <div className="group flex h-40 flex-col justify-between rounded-[1.5rem] bg-white p-6 shadow-sm transition-all hover:bg-[#f7f9fb] hover:shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+            <div className="flex items-start justify-between">
+              <span className="rounded-lg bg-orange-50 p-2 text-[#a04100]">
+                <MsIcon name="category" />
+              </span>
+            </div>
+            <div>
+              <p
+                className={cn(
+                  manrope.className,
+                  "text-4xl font-extrabold text-[#191c1e] transition-colors group-hover:text-[#a04100]"
+                )}
+              >
+                {totalCategories}
+              </p>
+              <p className="text-sm font-medium text-[#5a4136]">Room Categories</p>
+            </div>
+          </div>
 
-      <h2 className="mt-8 text-lg font-semibold text-slate-900">Quick links</h2>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {quickLinks.map((link) => (
-          <Card
-            key={link.href}
-            className="border-slate-100 bg-white transition hover:shadow-md"
+          <div className="group flex h-40 flex-col justify-between rounded-[1.5rem] bg-white p-6 shadow-sm transition-all hover:bg-[#f7f9fb] hover:shadow-[0px_12px_32px_rgba(25,28,30,0.06)]">
+            <div className="flex items-start justify-between">
+              <span className="rounded-lg bg-orange-50 p-2 text-[#a04100]">
+                <MsIcon name="calendar_today" />
+              </span>
+              <span className="rounded-full bg-[#ffdbcc]/80 px-2 py-1 text-[10px] font-bold uppercase text-[#7a3000]">
+                Weekly
+              </span>
+            </div>
+            <div>
+              <p
+                className={cn(
+                  manrope.className,
+                  "text-4xl font-extrabold text-[#191c1e] transition-colors group-hover:text-[#a04100]"
+                )}
+              >
+                {weeklyBookingsCount}
+              </p>
+              <p className="text-sm font-medium text-[#5a4136]">Bookings (last 7 days)</p>
+            </div>
+          </div>
+        </section>
+
+        {/* Operations */}
+        <section className="mb-16">
+          <h2
+            className={cn(
+              manrope.className,
+              "mb-6 flex items-center gap-2 text-lg font-bold text-[#191c1e]"
+            )}
           >
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-base font-medium">
-                <link.icon className={`h-5 w-5 ${link.color}`} />
-                {link.label}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <Button asChild variant="outline" className="w-full border-[#5a189a]/30 text-[#5a189a] hover:bg-[#5a189a]/10">
-                <Link href={link.href}>
+            <span className="h-6 w-1 rounded-full bg-[#a04100]" />
+            Operations Management
+          </h2>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {operationCards.map((card) => (
+              <div
+                key={card.href}
+                className="group flex flex-col gap-4 rounded-2xl border border-transparent bg-[#f2f4f6] p-5 transition-all hover:border-[#e2bfb0]/40 hover:bg-white"
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-[#a04100] shadow-sm transition-transform group-hover:scale-110">
+                  <MsIcon name={card.icon} />
+                </div>
+                <div>
+                  <p className={cn(manrope.className, "text-sm font-bold text-[#191c1e]")}>
+                    {card.title}
+                  </p>
+                  <p className="mt-1 text-[11px] text-[#5a4136]">{card.description}</p>
+                </div>
+                <Link
+                  href={card.href}
+                  className={cn(
+                    manrope.className,
+                    "w-full rounded-lg bg-[#e6e8ea] py-2 text-center text-xs font-bold text-[#5a4136] transition-colors group-hover:bg-[#a04100] group-hover:text-white"
+                  )}
+                >
                   Open
-                  <ArrowRight className="ml-1 h-4 w-4" />
                 </Link>
-              </Button>
-            </CardContent>
-          </Card>
-        ))}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Staff + Finance */}
+        <section className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+          <div className="rounded-[2rem] bg-[#f2f4f6] p-6 sm:p-8">
+            <h3
+              className={cn(
+                manrope.className,
+                "mb-6 flex items-center justify-between text-xl font-extrabold text-[#191c1e]"
+              )}
+            >
+              Staff & Human Resources
+              <MsIcon name="badge" className="text-[#e2bfb0]" />
+            </h3>
+            <div className="space-y-4">
+              {staffLinks.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="group flex cursor-pointer items-center justify-between rounded-xl bg-white p-4 transition-all hover:shadow-sm"
+                >
+                  <div className="flex items-center gap-4">
+                    <MsIcon name={item.icon} className="text-[#5a4136]" />
+                    <span className={cn(manrope.className, "text-sm font-bold text-[#191c1e]")}>
+                      {item.title}
+                    </span>
+                  </div>
+                  <MsIcon
+                    name="arrow_forward_ios"
+                    className="text-sm text-[#e2bfb0] transition-colors group-hover:text-[#a04100]"
+                  />
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] bg-[#f2f4f6] p-6 sm:p-8">
+            <h3
+              className={cn(
+                manrope.className,
+                "mb-6 flex items-center justify-between text-xl font-extrabold text-[#191c1e]"
+              )}
+            >
+              Financial Management
+              <MsIcon name="account_balance" className="text-[#e2bfb0]" />
+            </h3>
+            <div className="space-y-4">
+              {financeLinks.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="group flex cursor-pointer items-center justify-between rounded-xl bg-white p-4 transition-all hover:shadow-sm"
+                >
+                  <div className="flex items-center gap-4">
+                    <MsIcon name={item.icon} className="text-[#5a4136]" />
+                    <span className={cn(manrope.className, "text-sm font-bold text-[#191c1e]")}>
+                      {item.title}
+                    </span>
+                  </div>
+                  <MsIcon
+                    name="arrow_forward_ios"
+                    className="text-sm text-[#e2bfb0] transition-colors group-hover:text-[#a04100]"
+                  />
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Reference total + weekly note */}
+        <p className="mt-8 text-center text-xs text-[#5a4136]/80">
+          All-time bookings in system:{" "}
+          <span className="font-semibold text-[#191c1e]">{totalBookings}</span>
+        </p>
       </div>
     </div>
   );

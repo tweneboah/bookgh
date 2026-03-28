@@ -13,6 +13,12 @@ export interface IInventoryItem extends Document {
   category: string;
   unit: string;
   unitConversions?: Array<{ unit: string; factor: number }>;
+  /** Reference to the RestaurantUnit used when purchasing this item (e.g. "small bag", "crate"). */
+  purchaseUnitId?: Schema.Types.ObjectId;
+  /** Reference to the RestaurantUnit the kitchen tracks yield in (e.g. "plate", "serving"). */
+  yieldUnitId?: Schema.Types.ObjectId;
+  /** How many yield-units one purchase-unit produces (e.g. 1 bag → 20 plates). */
+  yieldPerPurchaseUnit?: number;
   images: IInventoryItemImage[];
   currentStock: number;
   minimumStock: number;
@@ -60,6 +66,9 @@ const inventoryItemSchema = new Schema<IInventoryItem>(
     minimumStock: { type: Number, default: 0 },
     reorderLevel: { type: Number, default: 0 },
     unitCost: { type: Number, default: 0 },
+    purchaseUnitId: { type: Schema.Types.ObjectId, ref: "RestaurantUnit" },
+    yieldUnitId: { type: Schema.Types.ObjectId, ref: "RestaurantUnit" },
+    yieldPerPurchaseUnit: { type: Number, min: 0 },
     supplier: { type: String },
     sku: { type: String },
     volumeMl: { type: Number, min: 0 },

@@ -22,6 +22,8 @@ export interface ModalProps {
   children: ReactNode;
   size?: keyof typeof modalSizes;
   className?: string;
+  /** Merged into the scrollable body wrapper (e.g. `p-0 flex-1 min-h-0` for custom layouts). */
+  bodyClassName?: string;
 }
 
 export function Modal({
@@ -31,6 +33,7 @@ export function Modal({
   children,
   size = "md",
   className,
+  bodyClassName,
 }: ModalProps) {
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
@@ -97,7 +100,13 @@ export function Modal({
             </Button>
           </div>
         )}
-        <div className={cn("overflow-y-auto", title !== "" ? "px-6 py-4" : "")}>
+        <div
+          className={cn(
+            "overflow-y-auto",
+            title !== "" ? "px-6 py-4" : "",
+            bodyClassName
+          )}
+        >
           {children}
         </div>
       </div>

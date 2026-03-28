@@ -251,6 +251,7 @@ export const POST = withHandler(
         deliveryNoteNumber: payload.deliveryNoteNumber,
         receiveToDepartment,
         receivedAt,
+        supplierId: String(po.supplierId),
         lines: receiptLines,
       },
     } as any);

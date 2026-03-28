@@ -5,6 +5,8 @@ import {
   type ProcurementOrderStatus,
   DEPARTMENT,
   type Department,
+  PAYMENT_METHOD,
+  type PaymentMethod,
 } from "@/constants";
 import { tenantPlugin, branchPlugin, createdByPlugin } from "@/lib/plugins";
 
@@ -33,6 +35,11 @@ export interface IPurchaseOrder extends Document {
   subtotal: number;
   taxAmount?: number;
   totalAmount: number;
+  negotiatedTotalAmount?: number;
+  paymentMethod?: PaymentMethod;
+  paymentDueDate?: Date;
+  paymentNotes?: string;
+  negotiationNotes?: string;
   status: ProcurementOrderStatus;
   notes?: string;
   createdBy?: Schema.Types.ObjectId;
@@ -71,6 +78,11 @@ const purchaseOrderSchema = new Schema<IPurchaseOrder>(
     subtotal: { type: Number, required: true, min: 0 },
     taxAmount: { type: Number, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },
+    negotiatedTotalAmount: { type: Number, min: 0 },
+    paymentMethod: { type: String, enum: enumValues(PAYMENT_METHOD) },
+    paymentDueDate: { type: Date },
+    paymentNotes: { type: String },
+    negotiationNotes: { type: String },
     status: {
       type: String,
       enum: enumValues(PROCUREMENT_ORDER_STATUS),
@@ -88,6 +100,7 @@ purchaseOrderSchema.plugin(createdByPlugin);
 purchaseOrderSchema.index({ tenantId: 1, branchId: 1, poNumber: 1 }, { unique: true });
 purchaseOrderSchema.index({ tenantId: 1, branchId: 1, status: 1 });
 purchaseOrderSchema.index({ tenantId: 1, branchId: 1, supplierId: 1 });
+purchaseOrderSchema.index({ tenantId: 1, branchId: 1, paymentDueDate: 1 });
 
 const PurchaseOrder: Model<IPurchaseOrder> =
   mongoose.models.PurchaseOrder ||

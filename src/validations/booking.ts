@@ -24,6 +24,11 @@ export const createBookingSchema = z.object({
   depositRequired: z.number().min(0).optional(),
 });
 
+/** Same fields as a single booking plus how many parallel rooms to book (2–50). */
+export const createGroupBookingsSchema = createBookingSchema.extend({
+  groupSize: z.coerce.number().int().min(2).max(50),
+});
+
 export const updateBookingSchema = z.object({
   corporateAccountId: z.string().optional(),
   roomCategoryId: z.string().min(1).optional(),
@@ -47,6 +52,10 @@ export const updateBookingSchema = z.object({
 export const checkInSchema = z.object({
   roomId: z.string().min(1),
   depositPaid: z.number().min(0).optional(),
+  /** How the amount collected at check-in was received (defaults to cash on the server). */
+  paymentMethod: z
+    .enum(enumValues(PAYMENT_METHOD) as [string, ...string[]])
+    .optional(),
   idType: z.enum(enumValues(ID_TYPE) as [string, ...string[]]).optional(),
   idNumber: z.string().min(3).optional(),
   idDocument: z.string().url().optional(),

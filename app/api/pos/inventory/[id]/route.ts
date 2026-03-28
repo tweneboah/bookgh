@@ -30,11 +30,17 @@ export const GET = withHandler(
     );
     let doc: any = null;
     for (const Model of getInventoryItemModelsForQuery(department)) {
-      doc = await Model.findOne({
+      let q = Model.findOne({
         _id: params.id,
         tenantId,
         branchId,
-      } as Record<string, unknown>).lean();
+      } as Record<string, unknown>);
+      if (department === "restaurant") {
+        q = q
+          .populate("purchaseUnitId", "name abbreviation type")
+          .populate("yieldUnitId", "name abbreviation type");
+      }
+      doc = await q.lean();
       if (doc) break;
     }
     if (!doc) throw new NotFoundError("Inventory item");

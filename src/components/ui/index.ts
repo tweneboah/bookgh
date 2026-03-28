@@ -25,3 +25,4 @@ export type { UploadedImage } from "./image-upload";
 export { ImageUpload } from "./image-upload";
 export type { ColorPickerProps } from "./color-picker";
 export { ColorPicker } from "./color-picker";
+export { StockImagePicker } from "./stock-image-picker";

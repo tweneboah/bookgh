@@ -164,6 +164,11 @@ export const PATCH = withHandler(
     const InventoryItemModel = getInventoryItemModelForDepartment(receiveToDepartment);
     const InventoryMovementModel =
       getInventoryMovementModelForDepartment(receiveToDepartment);
+    const before = await PurchaseOrderModel.findOne({
+      _id: params.id,
+      tenantId,
+      branchId,
+    } as any).lean();
     const payload = {
       ...body,
       receiveToDepartment: undefined,
@@ -173,6 +178,7 @@ export const PATCH = withHandler(
       ...(body.orderDate ? { orderDate: new Date(body.orderDate) } : {}),
       ...(body.expectedDate ? { expectedDate: new Date(body.expectedDate) } : {}),
       ...(body.receivedDate ? { receivedDate: new Date(body.receivedDate) } : {}),
+      ...(body.paymentDueDate ? { paymentDueDate: new Date(body.paymentDueDate) } : {}),
       ...(body.lines
         ? {
             lines: await normalizeIncomingLines({
@@ -189,15 +195,21 @@ export const PATCH = withHandler(
         payload.lines.reduce((sum, line) => sum + Number(line.totalCost ?? 0), 0).toFixed(2)
       );
       const taxAmount = Number(payload.taxAmount ?? 0);
+      const negotiatedTotalAmount = Number(
+        payload.negotiatedTotalAmount ?? before?.negotiatedTotalAmount ?? 0
+      );
+      const hasNegotiatedTotalAmount =
+        Number.isFinite(negotiatedTotalAmount) && negotiatedTotalAmount > 0;
       payload.subtotal = subtotal;
-      payload.totalAmount = Number((subtotal + taxAmount).toFixed(2));
+      payload.totalAmount = hasNegotiatedTotalAmount
+        ? Number(negotiatedTotalAmount.toFixed(2))
+        : Number((subtotal + taxAmount).toFixed(2));
+      if (payload.negotiatedTotalAmount != null) {
+        payload.negotiatedTotalAmount = hasNegotiatedTotalAmount
+          ? Number(negotiatedTotalAmount.toFixed(2))
+          : undefined;
+      }
     }
-
-    const before = await PurchaseOrderModel.findOne({
-      _id: params.id,
-      tenantId,
-      branchId,
-    } as any).lean();
     const doc = await PurchaseOrderModel.findOneAndUpdate(
       { _id: params.id, tenantId, branchId } as any,
       payload,
@@ -271,7 +283,10 @@ export const PATCH = withHandler(
       action: "update",
       resource: "purchaseOrder",
       resourceId: doc._id,
-      details: payload,
+      details: {
+        ...payload,
+        supplierId: String(doc.supplierId),
+      },
     } as any);
 
     return successResponse(doc.toObject());
@@ -301,6 +316,7 @@ export const DELETE = withHandler(
       action: "delete",
       resource: "purchaseOrder",
       resourceId: doc._id,
+      details: { supplierId: String(doc.supplierId) },
     } as any);
 
     return noContentResponse();

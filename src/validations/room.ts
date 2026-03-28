@@ -50,6 +50,7 @@ export const createPricingRuleSchema = z.object({
   modifierType: z.enum(enumValues(MODIFIER_TYPE) as [string, ...string[]]),
   modifierValue: z.number(),
   priority: z.number().int().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export const updatePricingRuleSchema = createPricingRuleSchema.partial().extend({

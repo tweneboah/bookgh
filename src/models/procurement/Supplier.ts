@@ -11,6 +11,21 @@ export interface ISupplierImage {
   caption?: string;
 }
 
+export interface ISupplierDocument {
+  url: string;
+  name: string;
+  documentType?: string;
+  expiryDate?: Date;
+}
+
+export interface ISupplierBankAccount {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  swiftCode?: string;
+  branchName?: string;
+}
+
 export interface ISupplier extends Document {
   tenantId: Schema.Types.ObjectId;
   branchId: Schema.Types.ObjectId;
@@ -25,6 +40,11 @@ export interface ISupplier extends Document {
   averageFulfillmentDays?: number;
   onTimeRate?: number;
   rating?: number;
+  paymentTerms?: string;
+  bankAccount?: ISupplierBankAccount;
+  documents: ISupplierDocument[];
+  blacklistedReason?: string;
+  blockedUntil?: Date;
   status: SupplierStatus;
   notes?: string;
   createdBy?: Schema.Types.ObjectId;
@@ -53,6 +73,27 @@ const supplierSchema = new Schema<ISupplier>(
     averageFulfillmentDays: { type: Number, min: 0 },
     onTimeRate: { type: Number, min: 0, max: 100 },
     rating: { type: Number, min: 0, max: 5 },
+    paymentTerms: { type: String, trim: true },
+    bankAccount: {
+      bankName: { type: String, trim: true },
+      accountName: { type: String, trim: true },
+      accountNumber: { type: String, trim: true },
+      swiftCode: { type: String, trim: true },
+      branchName: { type: String, trim: true },
+    },
+    documents: {
+      type: [
+        {
+          url: { type: String, required: true },
+          name: { type: String, trim: true },
+          documentType: { type: String, trim: true },
+          expiryDate: { type: Date },
+        },
+      ],
+      default: [],
+    },
+    blacklistedReason: { type: String, trim: true },
+    blockedUntil: { type: Date },
     status: {
       type: String,
       enum: enumValues(SUPPLIER_STATUS),

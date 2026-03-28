@@ -1,7 +1,7 @@
 import { withHandler } from "@/lib/with-handler";
 import { successResponse, noContentResponse } from "@/lib/api-response";
 import { requireBranch, requireRoles } from "@/lib/auth-context";
-import { NotFoundError } from "@/lib/errors";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { USER_ROLES } from "@/constants";
 import ActivityLog from "@/models/shared/ActivityLog";
 import { updateSupplierSchema } from "@/validations/procurement";
@@ -45,9 +45,40 @@ export const PATCH = withHandler(
     );
     const SupplierModel = getSupplierModelForDepartment(department);
     const body = updateSupplierSchema.parse(await req.json());
+    const normalized = {
+      ...body,
+      ...(body.blockedUntil ? { blockedUntil: new Date(body.blockedUntil) } : {}),
+      ...(body.documents
+        ? {
+            documents: body.documents.map((doc) => ({
+              ...doc,
+              expiryDate: doc.expiryDate ? new Date(doc.expiryDate) : undefined,
+            })),
+          }
+        : {}),
+    };
+    if (normalized.name || normalized.email || normalized.phone) {
+      const duplicate = await SupplierModel.findOne({
+        _id: { $ne: params.id },
+        tenantId,
+        branchId,
+        $or: [
+          ...(normalized.name ? [{ name: normalized.name }] : []),
+          ...(normalized.email ? [{ email: normalized.email }] : []),
+          ...(normalized.phone ? [{ phone: normalized.phone }] : []),
+        ],
+      } as any)
+        .select("_id name")
+        .lean();
+      if (duplicate) {
+        throw new BadRequestError(
+          `Potential duplicate found: ${duplicate.name}. Merge records before saving this update.`
+        );
+      }
+    }
     const doc = await SupplierModel.findOneAndUpdate(
       { _id: params.id, tenantId, branchId } as any,
-      body,
+      normalized,
       { new: true, runValidators: true }
     ).lean();
     if (!doc) throw new NotFoundError("Supplier");
@@ -59,7 +90,7 @@ export const PATCH = withHandler(
       action: "update",
       resource: "supplier",
       resourceId: doc._id,
-      details: body,
+      details: normalized,
     } as any);
 
     return successResponse(doc);

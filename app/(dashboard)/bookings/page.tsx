@@ -2,9 +2,11 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useBookings,
   useCreateBooking,
+  useCreateGroupBookings,
   useUpdateBooking,
   useCheckIn,
   useCheckOut,
@@ -46,6 +48,7 @@ import {
   BedDouble,
   Sparkles,
   Users,
+  UserPlus,
   MoreHorizontal,
   CalendarDays,
   TrendingUp,
@@ -61,6 +64,7 @@ import {
   ROOM_CHARGE_TYPE,
   PAYMENT_METHOD,
   ID_TYPE,
+  MODIFIER_TYPE,
 } from "@/constants";
 
 const CHARGE_TYPE_OPTIONS = Object.entries(ROOM_CHARGE_TYPE).map(([k, v]) => ({
@@ -159,6 +163,11 @@ const ID_TYPE_OPTIONS = Object.entries(ID_TYPE).map(([k, v]) => ({
   label: k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").trim(),
 }));
 
+const CHECK_IN_PAYMENT_METHOD_OPTIONS = Object.entries(PAYMENT_METHOD).map(([k, v]) => ({
+  value: v,
+  label: k.replace(/([A-Z])/g, " $1").trim(),
+}));
+
 function toISO(dateStr: string): string {
   if (!dateStr) return "";
   return new Date(dateStr).toISOString();
@@ -188,7 +197,305 @@ function prettyLabel(value?: string): string {
 const formatGHS = (amount: number) =>
   new Intl.NumberFormat("en-GH", { style: "currency", currency: "GHS" }).format(amount);
 
+type QuotePricingStep = {
+  ruleName: string;
+  modifierType: string;
+  modifierValue: number;
+  rateBefore: number;
+  rateAfter: number;
+};
+
+type QuotePricingNight = {
+  date: string;
+  dayLabel?: string;
+  basePrice: number;
+  finalRate: number;
+  steps?: QuotePricingStep[];
+};
+
+type QuoteRuleSummary = {
+  id?: string;
+  name: string;
+  modifierLabel: string;
+  dateRangeLabel: string;
+  daysLabel: string;
+  categoryScopeLabel: string;
+};
+
+type QuotePricingPayload = {
+  categoryName?: string;
+  basePrice?: number;
+  numberOfNights?: number;
+  roomRatePerNight?: number;
+  totalAmount?: number;
+  suggestedDeposit?: number;
+  breakdown?: QuotePricingNight[];
+  appliedRulesSummary?: QuoteRuleSummary[];
+  corporateDiscountRate?: number;
+};
+
+function quoteModifierShort(modifierType: string, modifierValue: number): string {
+  if (modifierType === MODIFIER_TYPE.FIXED) {
+    const sign = modifierValue >= 0 ? "+" : "";
+    return `${sign}${modifierValue.toFixed(2)} GHS fixed`;
+  }
+  const sign = modifierValue >= 0 ? "+" : "";
+  return `${sign}${modifierValue}%`;
+}
+
+function BeforeAfterAmounts({
+  before,
+  after,
+  beforeLabel = "Before",
+  afterLabel = "After",
+  dense,
+}: {
+  before: number;
+  after: number;
+  beforeLabel?: string;
+  afterLabel?: string;
+  dense?: boolean;
+}) {
+  const changed = Math.abs(before - after) > 0.005;
+  return (
+    <span
+      className={`inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 ${dense ? "text-[11px] leading-snug" : "text-xs"}`}
+    >
+      <span className="font-medium text-slate-500">{beforeLabel}</span>
+      <span
+        className={`font-semibold tabular-nums text-slate-600 ${changed ? "line-through decoration-slate-400/80" : ""}`}
+      >
+        {formatGHS(before)}
+      </span>
+      <span className="font-medium text-slate-400" aria-hidden>
+        →
+      </span>
+      <span className="font-medium text-slate-500">{afterLabel}</span>
+      <span className="font-bold tabular-nums text-[#5a189a]">{formatGHS(after)}</span>
+    </span>
+  );
+}
+
+function AccommodationQuotePricingDetails({
+  quote,
+  stayRangeLabel,
+}: {
+  quote: QuotePricingPayload;
+  stayRangeLabel?: string;
+}) {
+  const nights = quote.breakdown ?? [];
+  const hasRuleSteps = nights.some((n) => (n.steps?.length ?? 0) > 0);
+  const hasSummary = (quote.appliedRulesSummary?.length ?? 0) > 0;
+  const hasRules = hasRuleSteps || hasSummary;
+
+  const stayTotalBeforeRules =
+    nights.length > 0
+      ? nights.reduce((sum, n) => sum + Number(n.basePrice), 0)
+      : quote.basePrice != null && quote.numberOfNights != null
+        ? Number(quote.basePrice) * Number(quote.numberOfNights)
+        : null;
+  const stayTotalAfterRules =
+    nights.length > 0 ? nights.reduce((sum, n) => sum + Number(n.finalRate), 0) : null;
+  const showStayBeforeAfter =
+    hasRuleSteps &&
+    stayTotalBeforeRules != null &&
+    stayTotalAfterRules != null &&
+    Math.abs(stayTotalBeforeRules - stayTotalAfterRules) > 0.005;
+
+  return (
+    <div className="space-y-3 text-sm">
+      {stayRangeLabel && (
+        <p className="text-xs text-slate-600">
+          <span className="font-medium text-slate-500">Stay dates: </span>
+          {stayRangeLabel}
+        </p>
+      )}
+      <p className="text-xs text-slate-600">
+        <span className="font-medium text-slate-500">Room category: </span>
+        {quote.categoryName ?? "—"}
+        {quote.basePrice != null && (
+          <>
+            {" "}
+            · Category base {formatGHS(Number(quote.basePrice))}/night (before rules)
+          </>
+        )}
+      </p>
+
+      {showStayBeforeAfter && (
+        <div className="rounded-lg border border-[#5a189a]/25 bg-gradient-to-r from-white to-[#5a189a]/5 px-3 py-2.5">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#5a189a]">
+            Category base vs after pricing rules
+          </p>
+          <BeforeAfterAmounts
+            before={stayTotalBeforeRules!}
+            after={stayTotalAfterRules!}
+            beforeLabel="Base (no rules)"
+            afterLabel="After rules"
+          />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+            Rules don&apos;t only discount: they <span className="font-medium text-slate-600">modify</span> the
+            base rate. A <span className="font-medium text-slate-600">positive</span> % or fixed add-on{" "}
+            <span className="font-medium text-slate-600">raises</span> the price; a{" "}
+            <span className="font-medium text-slate-600">negative</span> % or fixed reduction lowers it. Here,
+            &quot;Base&quot; is category price × nights; &quot;After rules&quot; is that total after every
+            matched rule for each night.
+          </p>
+        </div>
+      )}
+
+      {hasSummary && quote.appliedRulesSummary && (
+        <div className="rounded-lg border border-slate-200 bg-white/90 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Active rules — date range · days · category scope
+          </p>
+          <ul className="space-y-2.5">
+            {quote.appliedRulesSummary.map((r) => (
+              <li key={r.id ?? r.name} className="text-xs text-slate-700">
+                <span className="font-semibold text-slate-900">{r.name}</span>
+                <span className="text-[#5a189a]"> · {r.modifierLabel}</span>
+                <div className="mt-0.5 text-slate-500">
+                  {r.dateRangeLabel} · Days: {r.daysLabel} · {r.categoryScopeLabel}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {nights.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white/90 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Nightly calculation (modifiers apply in priority order)
+          </p>
+          <ul className="space-y-3">
+            {nights.map((night) => (
+              <li key={night.date} className="text-xs">
+                <span className="font-medium text-slate-800">
+                  {night.date}
+                  {night.dayLabel ? ` (${night.dayLabel})` : ""}
+                </span>
+                {!night.steps?.length ? (
+                  <span className="mt-1 block text-slate-600">
+                    {formatGHS(Number(night.basePrice))} — no rules matched this night
+                  </span>
+                ) : (
+                  <div className="mt-1.5 space-y-2 border-l-2 border-[#5a189a]/35 pl-2.5">
+                    <div className="rounded-md bg-slate-50/90 px-2 py-1.5">
+                      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                        This night
+                      </p>
+                      <BeforeAfterAmounts
+                        before={Number(night.basePrice)}
+                        after={Number(night.finalRate)}
+                        beforeLabel="Before rules"
+                        afterLabel="After rules"
+                      />
+                    </div>
+                    {night.steps!.map((s, i) => (
+                      <div
+                        key={`${night.date}-${i}-${s.ruleName}`}
+                        className="rounded-md border border-slate-200/90 bg-white px-2 py-1.5"
+                      >
+                        <p className="mb-1 text-[11px] font-semibold text-slate-800">
+                          {s.ruleName}{" "}
+                          <span className="font-normal text-[#5a189a]">
+                            ({quoteModifierShort(s.modifierType, s.modifierValue)})
+                          </span>
+                        </p>
+                        <BeforeAfterAmounts
+                          before={Number(s.rateBefore)}
+                          after={Number(s.rateAfter)}
+                          beforeLabel="Before"
+                          afterLabel="After"
+                          dense
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!hasRules && (
+        <p className="text-xs text-slate-500">
+          No pricing rules matched this stay; rate is the category base for each night.
+        </p>
+      )}
+
+      <div className="space-y-2 border-t border-slate-200/80 pt-2">
+        {Number(quote.corporateDiscountRate ?? 0) > 0 &&
+        stayTotalAfterRules != null &&
+        quote.totalAmount != null ? (
+          <div className="rounded-md border border-[#5a189a]/15 bg-[#5a189a]/5 px-2.5 py-2">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#5a189a]">
+              Corporate discount
+            </p>
+            <BeforeAfterAmounts
+              before={stayTotalAfterRules}
+              after={Number(quote.totalAmount)}
+              beforeLabel="Before corporate"
+              afterLabel="After corporate"
+            />
+          </div>
+        ) : Number(quote.corporateDiscountRate ?? 0) > 0 ? (
+          <p className="rounded-md border border-[#5a189a]/20 bg-white/80 px-2 py-1.5 text-xs text-[#5a189a]">
+            Corporate discount applies; final total is shown below.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-medium text-slate-500">
+            {quote.numberOfNights} night{quote.numberOfNights !== 1 ? "s" : ""}
+            {quote.roomRatePerNight != null && (
+              <>
+                {" "}
+                · Avg {formatGHS(Number(quote.roomRatePerNight))}/night
+                {Number(quote.corporateDiscountRate ?? 0) > 0 ? " (incl. corporate)" : " after rules"}
+              </>
+            )}
+          </p>
+          <p className="text-lg font-bold text-[#5a189a]">
+            {quote.totalAmount != null && formatGHS(Number(quote.totalAmount))} stay total
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getErrorMessage(err: any, fallback = "Something went wrong"): string {
+  return (
+    err?.response?.data?.error?.message ||
+    err?.response?.data?.message ||
+    err?.message ||
+    fallback
+  );
+}
+
+function getCheckInErrorMessage(err: any): string {
+  const apiMessage = getErrorMessage(err, "");
+  if (apiMessage) return apiMessage;
+
+  const status = err?.response?.status;
+  if (status === 400) {
+    return "Check-in failed. Please verify booking status, selected room availability, and payment/ID details, then try again.";
+  }
+  if (status === 404) {
+    return "Check-in failed because the booking or room was not found. Refresh the page and try again.";
+  }
+  if (status === 409) {
+    return "Check-in conflict detected. The booking or room state changed. Refresh availability and retry.";
+  }
+  if (!err?.response) {
+    return "Check-in failed due to a network issue. Please check your connection and try again.";
+  }
+  return "Check-in failed unexpectedly. Please retry. If this continues, contact support with the booking reference.";
+}
+
 export default function BookingsPage() {
+  const router = useRouter();
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -217,6 +524,7 @@ export default function BookingsPage() {
   const [checkInForm, setCheckInForm] = useState({
     roomId: "",
     depositPaid: "",
+    paymentMethod: PAYMENT_METHOD.CASH as string,
     idType: "",
     idNumber: "",
     idImages: [] as UploadedImage[],
@@ -227,6 +535,7 @@ export default function BookingsPage() {
     roomId: "",
     depositPaid:
       row?.depositPaid != null && Number(row.depositPaid) > 0 ? String(row.depositPaid) : "",
+    paymentMethod: PAYMENT_METHOD.CASH,
     idType: "",
     idNumber: "",
     idImages: [] as UploadedImage[],
@@ -274,6 +583,7 @@ export default function BookingsPage() {
   const cancelMut = useCancelBooking();
   const markNoShowMut = useMarkBookingNoShow();
   const createMut = useCreateBooking();
+  const createGroupMut = useCreateGroupBookings();
   const updateMut = useUpdateBooking();
   const addChargeMut = useAddRoomCharge();
   const deleteChargeMut = useDeleteRoomCharge();
@@ -366,7 +676,7 @@ export default function BookingsPage() {
           roomCategoryId: createForm.roomCategoryId,
           checkInDate: toISO(createForm.checkInDate),
           checkOutDate: toISO(createForm.checkOutDate),
-          ...(createForm.source === BOOKING_SOURCE.CORPORATE && createForm.corporateAccountId
+          ...(createForm.corporateAccountId
             ? { corporateAccountId: createForm.corporateAccountId }
             : {}),
         }
@@ -376,6 +686,17 @@ export default function BookingsPage() {
   );
   const quoteData = quoteResponse?.data;
   const quote = quoteData?.quote;
+
+  /** Aligns with GET /bookings/quote: rooms that can be assigned for this category & stay window. */
+  const availableRoomCount = Array.isArray(quoteData?.availableRooms)
+    ? quoteData.availableRooms.length
+    : null;
+  const parsedGroupSize = Math.max(1, parseInt(createForm.groupSize, 10) || 1);
+  const groupNeedsMultipleRooms = createForm.isGroupBooking && parsedGroupSize > 1;
+  const groupBlockedByAvailability =
+    groupNeedsMultipleRooms &&
+    availableRoomCount !== null &&
+    parsedGroupSize > availableRoomCount;
 
   const selectedCategory = createForm.roomCategoryId
     ? (categories as any[]).find((c: any) => c._id === createForm.roomCategoryId)
@@ -396,6 +717,10 @@ export default function BookingsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!createForm.guestId?.trim()) {
+      toast.error("Select a guest or add one on the Guests page");
+      return;
+    }
     if (
       createForm.source === BOOKING_SOURCE.CORPORATE &&
       !createForm.corporateAccountId
@@ -412,10 +737,8 @@ export default function BookingsPage() {
 
       const payload = {
         guestId: createForm.guestId,
-        corporateAccountId:
-          createForm.source === BOOKING_SOURCE.CORPORATE
-            ? createForm.corporateAccountId
-            : undefined,
+        /** Must be sent whenever set so the booking matches the quoted corporate rate (API treats this as corporate). */
+        corporateAccountId: createForm.corporateAccountId || undefined,
         roomCategoryId: createForm.roomCategoryId,
         checkInDate: toISO(createForm.checkInDate),
         checkOutDate: toISO(createForm.checkOutDate),
@@ -427,9 +750,14 @@ export default function BookingsPage() {
       };
 
       if (isGroupMode && groupSize > 1) {
-        for (let i = 0; i < groupSize; i++) {
-          await createMut.mutateAsync(payload);
+        const avail = quoteData?.availableRooms;
+        if (Array.isArray(avail) && avail.length < groupSize) {
+          toast.error(
+            `Only ${avail.length} room(s) available in this category for these dates. Reduce "Rooms in group", or change category/dates.`
+          );
+          return;
         }
+        await createGroupMut.mutateAsync({ ...payload, groupSize });
         toast.success(`Created ${groupSize} linked group bookings`);
       } else {
         await createMut.mutateAsync(payload);
@@ -462,6 +790,7 @@ export default function BookingsPage() {
         id: showCheckIn._id,
         roomId: checkInForm.roomId,
         depositPaid: Number(checkInForm.depositPaid) || 0,
+        paymentMethod: checkInForm.paymentMethod || PAYMENT_METHOD.CASH,
         idType: checkInForm.idType || undefined,
         idNumber: checkInForm.idNumber || undefined,
         idDocument: checkInForm.idImages[0]?.url || undefined,
@@ -470,7 +799,7 @@ export default function BookingsPage() {
       setShowCheckIn(null);
       setCheckInForm(getInitialCheckInForm(null));
     } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message ?? "Something went wrong");
+      toast.error(getCheckInErrorMessage(err));
     }
   };
 
@@ -792,6 +1121,62 @@ export default function BookingsPage() {
     label: `${r.roomNumber ?? "—"}${r.floor != null ? ` (Floor ${r.floor})` : ""} - ${r.roomCategoryId?.name ?? ""}`.trim() || `Room ${r.roomNumber ?? r._id}`,
   })).filter((o) => o.value);
 
+  const checkInQuoteParams = (() => {
+    if (!showCheckIn?.checkInDate || !showCheckIn?.checkOutDate) return null;
+    const rcid = showCheckIn.roomCategoryId
+      ? String(
+          typeof showCheckIn.roomCategoryId === "object"
+            ? (showCheckIn.roomCategoryId as { _id?: string })._id
+            : showCheckIn.roomCategoryId
+        )
+      : "";
+    if (!rcid) return null;
+    const checkIn = new Date(showCheckIn.checkInDate);
+    const checkOut = new Date(showCheckIn.checkOutDate);
+    if (Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime())) return null;
+    const corp = showCheckIn.corporateAccountId
+      ? String(
+          typeof showCheckIn.corporateAccountId === "object"
+            ? (showCheckIn.corporateAccountId as { _id?: string })._id
+            : showCheckIn.corporateAccountId
+        )
+      : "";
+    return {
+      roomCategoryId: rcid,
+      checkInDate: checkIn.toISOString(),
+      checkOutDate: checkOut.toISOString(),
+      ...(corp ? { corporateAccountId: corp } : {}),
+    };
+  })();
+
+  const { data: checkInQuoteResponse, isLoading: checkInQuoteLoading } = useBookingQuote(
+    checkInQuoteParams ?? { roomCategoryId: "", checkInDate: "", checkOutDate: "" }
+  );
+  const checkInQuote = checkInQuoteResponse?.data?.quote;
+
+  /** Balance due at check-in: live stay total (current rules) minus payments already on the booking. */
+  const checkInExpectedCollectAmount = useMemo(() => {
+    if (!showCheckIn) return 0;
+    const paidSoFar = Number(showCheckIn.depositPaid ?? 0);
+    if (
+      checkInQuote &&
+      !checkInQuoteLoading &&
+      checkInQuote.totalAmount != null &&
+      !Number.isNaN(Number(checkInQuote.totalAmount))
+    ) {
+      const liveTotal = Number(checkInQuote.totalAmount);
+      return Math.max(0, Math.round((liveTotal - paidSoFar) * 100) / 100);
+    }
+    return Number(showCheckIn.depositRequired ?? showCheckIn.totalAmount ?? 0);
+  }, [showCheckIn, checkInQuote, checkInQuoteLoading]);
+
+  const checkInPaymentUsesLiveQuote =
+    !!showCheckIn &&
+    !!checkInQuote &&
+    !checkInQuoteLoading &&
+    checkInQuote.totalAmount != null &&
+    !Number.isNaN(Number(checkInQuote.totalAmount));
+
   /** Render status as a small color card (pill) matching filter cards */
   const renderStatusPill = (status: string) => {
     const style = STATUS_CARD_STYLES[status] ?? STATUS_CARD_STYLES[""];
@@ -855,6 +1240,13 @@ export default function BookingsPage() {
               )}
             </div>
             <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <Link
+                href="/bookings/transactions"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-slate-200 bg-white px-4 py-2.5 font-semibold text-slate-700 shadow-sm transition hover:border-[#5a189a]/30 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-[#5a189a]/50"
+              >
+                <CreditCard className="h-5 w-5 text-[#5a189a]" aria-hidden />
+                Booking payments
+              </Link>
               <Link
                 href="/bookings/calendar"
                 className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-[#5a189a]/30 bg-white px-4 py-2.5 font-semibold text-[#5a189a] shadow-sm transition hover:border-[#5a189a]/50 hover:bg-[#5a189a]/5 focus-visible:ring-2 focus-visible:ring-[#5a189a]/50"
@@ -1325,9 +1717,24 @@ export default function BookingsPage() {
           <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
             {/* 1. Guest */}
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center gap-2 text-slate-800">
-                <Users className="h-4 w-4 text-[#5a189a]" />
-                <span className="text-sm font-semibold">Guest</span>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-slate-800">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-[#5a189a]" />
+                  <span className="text-sm font-semibold">Guest</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowCreate(false);
+                    router.push("/guests");
+                  }}
+                  className="shrink-0 border-[#5a189a]/30 text-[#5a189a] hover:bg-[#5a189a]/10"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Add new guest
+                </Button>
               </div>
               <AppReactSelect
                 options={[{ value: "", label: "Select guest..." }, ...guestOptions]}
@@ -1335,6 +1742,9 @@ export default function BookingsPage() {
                 onChange={(v) => setCreateForm((f) => ({ ...f, guestId: v }))}
                 placeholder="Search or select guest..."
               />
+              <p className="mt-2 text-xs text-slate-500">
+                New profile? Use <strong className="font-medium text-slate-600">Add new guest</strong> to open the Guests page, then return here to finish the booking.
+              </p>
             </section>
 
             {/* 2. Room category */}
@@ -1403,70 +1813,7 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
               </div>
             </section>
 
-            {/* Room & rate confirmation — price and room details; room assigned at check-in */}
-            {createForm.roomCategoryId && createForm.checkInDate && createForm.checkOutDate && (
-              <section className="rounded-xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-md sm:p-5">
-                <p className="mb-3 text-sm font-bold text-slate-800">
-                  Confirmation — price & room details
-                </p>
-                {quoteLoading ? (
-                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm text-slate-500">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#5a189a] border-t-transparent" />
-                    Loading price…
-                  </div>
-                ) : quote && selectedCategory ? (
-                  <div className="space-y-4">
-                    <p className="rounded-lg border border-slate-200 bg-slate-50/80 py-2 px-3 text-xs text-slate-600">
-                      A specific room will be assigned from this category at check-in.
-                    </p>
-                    {/* Room details */}
-                    <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
-                      <p className="font-semibold text-slate-900">{selectedCategory.name}</p>
-                      {selectedCategory.description && (
-                        <p className="mt-1 text-slate-600">{selectedCategory.description}</p>
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-500">
-                        {selectedCategory.maxOccupancy != null && (
-                          <span>Max {selectedCategory.maxOccupancy} guests</span>
-                        )}
-                        {selectedCategory.roomSize != null && (
-                          <span>{selectedCategory.roomSize} m²</span>
-                        )}
-                        {selectedCategory.bedType && (
-                          <span className="capitalize">{String(selectedCategory.bedType).replace(/_/g, " ")}</span>
-                        )}
-                      </div>
-                      {Array.isArray(selectedCategory.amenities) && selectedCategory.amenities.length > 0 && (
-                        <p className="mt-2 text-xs text-slate-500">
-                          {selectedCategory.amenities.slice(0, 5).join(" · ")}
-                          {selectedCategory.amenities.length > 5 && " …"}
-                        </p>
-                      )}
-                    </div>
-                    {/* Price summary */}
-                    <div className="rounded-lg border border-[#5a189a]/20 bg-[#5a189a]/5 p-3 sm:p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-medium text-slate-500">
-                            {quote.numberOfNights} night{quote.numberOfNights !== 1 ? "s" : ""} · {quote.roomRatePerNight != null && formatGHS(quote.roomRatePerNight)}/night
-                          </p>
-                          {Number(quote.corporateDiscountRate ?? 0) > 0 && (
-                            <p className="mt-0.5 text-xs text-[#5a189a]">
-                              Corporate discount applied
-                            </p>
-                          )}
-                        </div>
-                        <p className="text-lg font-bold text-[#5a189a]">
-                          {quote.totalAmount != null && formatGHS(quote.totalAmount)} total
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-            )}
-
-            {/* 4. Guests count & source */}
+            {/* Guests count & source — before price so quotes include corporate discount */}
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="mb-3 text-sm font-semibold text-slate-800">Guests & source</p>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1508,7 +1855,11 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                   ]}
                   value={createForm.corporateAccountId}
                   onChange={(v) =>
-                    setCreateForm((f) => ({ ...f, corporateAccountId: v }))
+                    setCreateForm((f) => ({
+                      ...f,
+                      corporateAccountId: v,
+                      ...(v ? { source: BOOKING_SOURCE.CORPORATE } : {}),
+                    }))
                   }
                   placeholder={createForm.source === BOOKING_SOURCE.CORPORATE ? "Select..." : "—"}
                 />
@@ -1519,6 +1870,62 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                 )}
               </div>
             </section>
+
+            {/* Room & rate confirmation — price and room details; room assigned at check-in */}
+            {createForm.roomCategoryId && createForm.checkInDate && createForm.checkOutDate && (
+              <section className="rounded-xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-md sm:p-5">
+                <p className="mb-3 text-sm font-bold text-slate-800">
+                  Confirmation — price & room details
+                </p>
+                {quoteLoading ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm text-slate-500">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#5a189a] border-t-transparent" />
+                    Loading price…
+                  </div>
+                ) : quote && selectedCategory ? (
+                  <div className="space-y-4">
+                    <p className="rounded-lg border border-slate-200 bg-slate-50/80 py-2 px-3 text-xs text-slate-600">
+                      A specific room will be assigned from this category at check-in.
+                    </p>
+                    {/* Room details */}
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                      <p className="font-semibold text-slate-900">{selectedCategory.name}</p>
+                      {selectedCategory.description && (
+                        <p className="mt-1 text-slate-600">{selectedCategory.description}</p>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-500">
+                        {selectedCategory.maxOccupancy != null && (
+                          <span>Max {selectedCategory.maxOccupancy} guests</span>
+                        )}
+                        {selectedCategory.roomSize != null && (
+                          <span>{selectedCategory.roomSize} m²</span>
+                        )}
+                        {selectedCategory.bedType && (
+                          <span className="capitalize">{String(selectedCategory.bedType).replace(/_/g, " ")}</span>
+                        )}
+                      </div>
+                      {Array.isArray(selectedCategory.amenities) && selectedCategory.amenities.length > 0 && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          {selectedCategory.amenities.slice(0, 5).join(" · ")}
+                          {selectedCategory.amenities.length > 5 && " …"}
+                        </p>
+                      )}
+                    </div>
+                    {/* Price summary — rules scope + nightly % / fixed steps */}
+                    <div className="rounded-lg border border-[#5a189a]/20 bg-[#5a189a]/5 p-3 sm:p-4">
+                      <AccommodationQuotePricingDetails
+                        quote={quote as QuotePricingPayload}
+                        stayRangeLabel={
+                          createForm.checkInDate && createForm.checkOutDate
+                            ? `${format(new Date(createForm.checkInDate), "MMM d, yyyy h:mm a")} → ${format(new Date(createForm.checkOutDate), "MMM d, yyyy h:mm a")}`
+                            : undefined
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            )}
 
             {/* Group booking */}
             <section className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
@@ -1539,26 +1946,55 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                 Group booking
               </label>
               {createForm.isGroupBooking && (
-                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Input
-                    label="Group ID (optional)"
-                    value={createForm.groupId}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, groupId: e.target.value }))
-                    }
-                    placeholder="Auto-generated if blank"
-                    className="rounded-xl border-slate-200 focus:border-[#5a189a] focus:ring-2 focus:ring-[#5a189a]/20"
-                  />
-                  <Input
-                    label="Rooms in group"
-                    type="number"
-                    min="1"
-                    value={createForm.groupSize}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, groupSize: e.target.value }))
-                    }
-                    className="rounded-xl border-slate-200 focus:border-[#5a189a] focus:ring-2 focus:ring-[#5a189a]/20"
-                  />
+                <div className="mt-3 space-y-3">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Input
+                      label="Group ID (optional)"
+                      value={createForm.groupId}
+                      onChange={(e) =>
+                        setCreateForm((f) => ({ ...f, groupId: e.target.value }))
+                      }
+                      placeholder="Auto-generated if blank"
+                      className="rounded-xl border-slate-200 focus:border-[#5a189a] focus:ring-2 focus:ring-[#5a189a]/20"
+                    />
+                    <Input
+                      label="Rooms in group"
+                      type="number"
+                      min="1"
+                      value={createForm.groupSize}
+                      onChange={(e) =>
+                        setCreateForm((f) => ({ ...f, groupSize: e.target.value }))
+                      }
+                      className="rounded-xl border-slate-200 focus:border-[#5a189a] focus:ring-2 focus:ring-[#5a189a]/20"
+                    />
+                  </div>
+                  {quoteParams &&
+                    (quoteLoading ? (
+                      <p className="text-xs text-slate-500">Checking how many rooms can be assigned…</p>
+                    ) : availableRoomCount !== null ? (
+                      <p
+                        className={`text-xs ${
+                          groupBlockedByAvailability ? "text-amber-800" : "text-slate-600"
+                        }`}
+                      >
+                        <span className="font-medium">{availableRoomCount}</span> room
+                        {availableRoomCount === 1 ? "" : "s"} in this category can be assigned for these
+                        dates (excludes rooms already booked or out of service).{" "}
+                        {groupNeedsMultipleRooms && (
+                          <>
+                            You are requesting <span className="font-medium">{parsedGroupSize}</span>{" "}
+                            parallel booking
+                            {parsedGroupSize === 1 ? "" : "s"}.
+                          </>
+                        )}
+                        {groupBlockedByAvailability && (
+                          <span className="mt-1 block font-medium">
+                            Reduce &quot;Rooms in group&quot; or change category/dates — the server will
+                            reject the group if capacity is insufficient.
+                          </span>
+                        )}
+                      </p>
+                    ) : null)}
                 </div>
               )}
             </section>
@@ -1587,11 +2023,14 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
             </Button>
             <Button
               type="submit"
-              loading={createMut.isPending}
+              loading={createMut.isPending || createGroupMut.isPending}
+              disabled={groupBlockedByAvailability}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff6d00] to-[#ff9100] px-5 py-2.5 font-semibold text-white shadow-lg shadow-[#ff8500]/25 hover:opacity-95 focus-visible:ring-2 focus-visible:ring-[#ff8500]/50 disabled:opacity-60"
             >
                 <Plus className="h-4 w-4" />
-                Create booking
+                {groupNeedsMultipleRooms
+                  ? `Create ${parsedGroupSize} bookings`
+                  : "Create booking"}
             </Button>
           </div>
         </form>
@@ -1785,12 +2224,23 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
 
                 {/* Step 2: Payment — expected + input + confirm bar; allow equal or more, show change */}
                 {(() => {
-                  const expectedAmount = Number(showCheckIn.depositRequired ?? showCheckIn.totalAmount ?? 0);
-                  const amountPaying = checkInForm.depositPaid !== "" ? Number(checkInForm.depositPaid) || 0 : null;
-                  const amountOk = amountPaying !== null && amountPaying >= expectedAmount - 0.01;
-                  const changeToGive = amountPaying !== null && amountPaying > expectedAmount
-                    ? amountPaying - expectedAmount
-                    : 0;
+                  const expectedAmount = checkInExpectedCollectAmount;
+                  const rawPay = checkInForm.depositPaid;
+                  const amountPaying =
+                    rawPay === "" && expectedAmount <= 0.01
+                      ? 0
+                      : rawPay === ""
+                        ? null
+                        : Number(rawPay) || 0;
+                  const amountOk =
+                    amountPaying !== null && amountPaying >= expectedAmount - 0.01;
+                  const changeToGive =
+                    amountPaying !== null && amountPaying > expectedAmount
+                      ? amountPaying - expectedAmount
+                      : 0;
+                  const bookingFileDue = Number(
+                    showCheckIn.depositRequired ?? showCheckIn.totalAmount ?? 0
+                  );
                   return (
                     <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
                       <div className="mb-3 flex items-center gap-2">
@@ -1802,10 +2252,92 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                           <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Required</span>
                         )}
                       </div>
+                      <div className="mb-4 rounded-xl border border-[#5a189a]/20 bg-[#5a189a]/5 px-4 py-3">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#5a189a]">
+                          Rate &amp; pricing rules
+                        </p>
+                        {checkInQuoteLoading ? (
+                          <div className="flex items-center gap-2 text-sm text-slate-600">
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#5a189a] border-t-transparent" />
+                            Loading current rules…
+                          </div>
+                        ) : checkInQuote ? (
+                          <div className="space-y-3">
+                            <AccommodationQuotePricingDetails
+                              quote={checkInQuote as QuotePricingPayload}
+                              stayRangeLabel={
+                                showCheckIn.checkInDate && showCheckIn.checkOutDate
+                                  ? `${format(new Date(showCheckIn.checkInDate), "MMM d, yyyy h:mm a")} → ${format(new Date(showCheckIn.checkOutDate), "MMM d, yyyy h:mm a")}`
+                                  : undefined
+                              }
+                            />
+                            {showCheckIn.totalAmount != null &&
+                              checkInQuote.totalAmount != null &&
+                              Math.abs(
+                                Number(showCheckIn.totalAmount) - Number(checkInQuote.totalAmount)
+                              ) > 0.02 && (
+                                <p className="rounded-lg border border-sky-200 bg-sky-50/90 px-2 py-1.5 text-xs font-medium text-sky-900">
+                                  Booking record: stay total {formatGHS(Number(showCheckIn.totalAmount))}.
+                                  Current rules: {formatGHS(Number(checkInQuote.totalAmount))}.{" "}
+                                  <span className="font-semibold">
+                                    &quot;Expected to collect&quot; uses the current rules total minus
+                                    payments already recorded on this booking.
+                                  </span>{" "}
+                                  Edit the booking if you want the stored totals to match today&apos;s
+                                  rules.
+                                </p>
+                              )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-600">
+                            Rate preview unavailable. Total on file:{" "}
+                            {showCheckIn.totalAmount != null
+                              ? formatGHS(Number(showCheckIn.totalAmount))
+                              : "—"}
+                            .{" "}
+                            <Link
+                              href="/pricing-rules?department=accommodation"
+                              className="font-medium text-[#5a189a] underline"
+                            >
+                              Pricing rules
+                            </Link>
+                          </p>
+                        )}
+                      </div>
                       <div className="mb-4 flex items-baseline justify-between rounded-xl bg-slate-50 px-4 py-3">
-                        <span className="text-sm font-medium text-slate-600">Expected to collect</span>
+                        <div>
+                          <span className="text-sm font-medium text-slate-600">Expected to collect</span>
+                          {checkInPaymentUsesLiveQuote && (
+                            <p className="mt-1 max-w-md text-[11px] leading-snug text-slate-500">
+                              Balance due at today&apos;s rules: stay total{" "}
+                              {checkInQuote?.totalAmount != null &&
+                                formatGHS(Number(checkInQuote.totalAmount))}{" "}
+                              minus already paid{" "}
+                              {formatGHS(Number(showCheckIn.depositPaid ?? 0))}.
+                            </p>
+                          )}
+                        </div>
                         <span className="text-lg font-bold text-slate-900">{formatGHS(expectedAmount)}</span>
                       </div>
+                      {checkInPaymentUsesLiveQuote &&
+                        Math.abs(bookingFileDue - expectedAmount) > 0.02 && (
+                          <p className="-mt-2 mb-4 text-[11px] text-slate-500">
+                            On booking file this was {formatGHS(bookingFileDue)} (deposit/total snapshot at
+                            booking time). Collection target above follows the live quote.
+                          </p>
+                        )}
+                      {!checkInPaymentUsesLiveQuote &&
+                        showCheckIn.depositRequired != null &&
+                        Number(showCheckIn.depositRequired) > 0 &&
+                        Number(showCheckIn.totalAmount ?? 0) > 0 &&
+                        Number(showCheckIn.depositRequired) <
+                          Number(showCheckIn.totalAmount ?? 0) - 0.01 && (
+                          <p className="-mt-2 mb-4 text-xs text-slate-500">
+                            Deposit policy: collect {formatGHS(Number(showCheckIn.depositRequired))} at
+                            check-in; full stay total on booking{" "}
+                            {formatGHS(Number(showCheckIn.totalAmount))}.
+                          </p>
+                        )}
                       <Input
                         label="Amount received"
                         type="number"
@@ -1816,9 +2348,20 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                           setCheckInForm((f) => ({ ...f, depositPaid: e.target.value }))
                         }
                         placeholder="0.00"
-                        required
+                        required={expectedAmount > 0.01}
                         className="rounded-xl border-slate-200 text-base font-medium focus:border-[#5a189a] focus:ring-2 focus:ring-[#5a189a]/20"
                       />
+                      <div className="mt-3">
+                        <AppReactSelect
+                          label="Payment method (for ledger)"
+                          options={CHECK_IN_PAYMENT_METHOD_OPTIONS}
+                          value={checkInForm.paymentMethod}
+                          onChange={(v) =>
+                            setCheckInForm((f) => ({ ...f, paymentMethod: v }))
+                          }
+                          placeholder="Method…"
+                        />
+                      </div>
                       {/* Confirm bar — at a glance; show change to give when paying more */}
                       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
                         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm before check-in</p>
@@ -1891,7 +2434,7 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                       onChange={(images) =>
                         setCheckInForm((f) => ({ ...f, idImages: images.slice(0, 1) }))
                       }
-                      folder="hotel-hub/guest-ids"
+                      folder="guest-ids"
                       single
                     />
                   </div>
@@ -1919,9 +2462,10 @@ selected={createForm.checkOutDate ? new Date(createForm.checkOutDate) : null}
                   loading={checkInMut.isPending}
                   disabled={
                     !checkInForm.roomId ||
-                    checkInForm.depositPaid === "" ||
-                    (Number(checkInForm.depositPaid) || 0) <
-                      Number(showCheckIn.depositRequired ?? showCheckIn.totalAmount ?? 0) - 0.01
+                    (checkInExpectedCollectAmount > 0.01 &&
+                      (checkInForm.depositPaid === "" ||
+                        (Number(checkInForm.depositPaid) || 0) <
+                          checkInExpectedCollectAmount - 0.01))
                   }
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff6d00] via-[#ff8500] to-[#ff9e00] px-6 py-3 font-semibold text-white shadow-lg shadow-[#ff8500]/30 hover:opacity-95 focus-visible:ring-2 focus-visible:ring-[#ff8500]/50"
                 >

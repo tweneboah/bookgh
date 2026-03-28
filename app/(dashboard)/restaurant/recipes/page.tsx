@@ -8,6 +8,8 @@ import {
   useDeleteRestaurantRecipe,
   useMenuItems,
   useInventoryItems,
+  useRestaurantUnits,
+  useItemYields,
 } from "@/hooks/api";
 import { Button, Modal, Input, Textarea, AppReactSelect } from "@/components/ui";
 import { IoAdd, IoPencil, IoTrash, IoBookOutline, IoSearch } from "react-icons/io5";
@@ -19,6 +21,8 @@ type IngredientRow = {
   quantity: string;
   unit: string;
   unitCost: string;
+  chefUnitId: string;
+  chefQty: string;
 };
 
 const fmt = (n: number) =>
@@ -37,7 +41,7 @@ export default function RestaurantRecipesPage() {
     overheadCost: "",
     productionTimeMinutes: "",
     preparationInstructions: "",
-    ingredients: [{ inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "" }] as IngredientRow[],
+    ingredients: [{ inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "", chefUnitId: "", chefQty: "" }] as IngredientRow[],
   });
 
   const params: Record<string, string> = { page: String(page), limit: "20" };
@@ -52,6 +56,40 @@ export default function RestaurantRecipesPage() {
     limit: "500",
     department: "restaurant",
   });
+  const { data: unitsRaw } = useRestaurantUnits({ limit: "200", active: "true" });
+  const chefUnits: any[] = Array.isArray(unitsRaw) ? unitsRaw : (unitsRaw as any)?.data ?? [];
+  const chefUnitOptions = chefUnits
+    .filter((u: any) => u.isActive !== false)
+    .map((u: any) => ({
+      value: u._id,
+      label: u.abbreviation ? `${u.name} (${u.abbreviation})` : u.name,
+    }));
+
+  const { data: yieldsRaw } = useItemYields({ limit: "1000" });
+  const yieldMappings: any[] = Array.isArray(yieldsRaw) ? yieldsRaw : (yieldsRaw as any)?.data ?? [];
+
+  const estimateChefCost = (inventoryItemId: string, chefUnitId: string, chefQty: number) => {
+    if (!inventoryItemId || !chefUnitId || !chefQty) return null;
+    const inv = inventoryItems.find((i: any) => String(i._id) === inventoryItemId);
+    if (!inv) return null;
+    const baseUnitCost = Number(inv.unitCost || 0);
+    const mapping = yieldMappings.find(
+      (y: any) =>
+        String(y.inventoryItemId?._id ?? y.inventoryItemId) === inventoryItemId &&
+        String(y.toUnitId?._id ?? y.toUnitId) === chefUnitId
+    );
+    if (mapping) {
+      const toQty = Number(mapping.toQty || 1);
+      const mappingBaseUnitQty = Number(mapping.baseUnitQty || 0);
+      if (mappingBaseUnitQty > 0) {
+        const costPerYieldUnit = (baseUnitCost * mappingBaseUnitQty) / toQty;
+        return Math.round(chefQty * costPerYieldUnit * 100) / 100;
+      }
+      return null;
+    }
+    return null;
+  };
+
   const createMut = useCreateRestaurantRecipe();
   const updateMut = useUpdateRestaurantRecipe();
   const deleteMut = useDeleteRestaurantRecipe();
@@ -73,16 +111,12 @@ export default function RestaurantRecipesPage() {
 
   const marginOverview = useMemo(() => {
     const validRows = form.ingredients.filter(
-      (i) => i.inventoryItemId && i.quantity && Number(i.quantity) > 0
+      (i) => i.inventoryItemId && i.chefUnitId && i.chefQty && Number(i.chefQty) > 0
     );
     let ingredientCost = 0;
     for (const row of validRows) {
-      const inv = inventoryItems.find(
-        (item: any) => String(item._id) === String(row.inventoryItemId)
-      );
-      const unitCost = Number((inv?.unitCost ?? row.unitCost) || 0);
-      const qty = Number(row.quantity || 0);
-      ingredientCost += Math.round(qty * unitCost * 100) / 100;
+      const est = estimateChefCost(row.inventoryItemId, row.chefUnitId, Number(row.chefQty));
+      ingredientCost += est ?? 0;
     }
     const overhead = Number(form.overheadCost || 0);
     const costPerPortion = Math.round((ingredientCost + overhead) * 100) / 100;
@@ -97,7 +131,8 @@ export default function RestaurantRecipesPage() {
       grossProfit,
       grossMarginPercent,
     };
-  }, [form.ingredients, form.overheadCost, form.sellingPrice, inventoryItems]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ingredients, form.overheadCost, form.sellingPrice, inventoryItems, yieldMappings]);
 
   const reset = () => {
     setForm({
@@ -107,7 +142,7 @@ export default function RestaurantRecipesPage() {
       overheadCost: "",
       productionTimeMinutes: "",
       preparationInstructions: "",
-      ingredients: [{ inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "" }],
+      ingredients: [{ inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "", chefUnitId: "", chefQty: "" }],
     });
     setEditItem(null);
   };
@@ -135,8 +170,10 @@ export default function RestaurantRecipesPage() {
               quantity: i.quantity != null ? String(i.quantity) : "",
               unit: i.unit ?? "unit",
               unitCost: i.unitCost != null ? String(i.unitCost) : "",
+              chefUnitId: i.chefUnitId?._id ?? i.chefUnitId ?? "",
+              chefQty: i.chefQty != null ? String(i.chefQty) : "",
             }))
-          : [{ inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "" }],
+          : [{ inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "", chefUnitId: "", chefQty: "" }],
     });
     setShowModal(true);
   };
@@ -148,10 +185,10 @@ export default function RestaurantRecipesPage() {
       return;
     }
     const validIngredientRows = form.ingredients.filter(
-      (i) => i.inventoryItemId && i.quantity && Number(i.quantity) > 0
+      (i) => i.inventoryItemId && i.chefUnitId && i.chefQty && Number(i.chefQty) > 0
     );
     if (validIngredientRows.length === 0) {
-      toast.error("Add at least one ingredient with a quantity greater than zero");
+      toast.error("Add at least one ingredient with a chef unit and quantity");
       return;
     }
     const ingredientIds = validIngredientRows.map((i) => i.inventoryItemId);
@@ -180,7 +217,7 @@ export default function RestaurantRecipesPage() {
     }
     const ingredients = validIngredientRows
       .map((i) => {
-        const qty = Number(i.quantity || 0);
+        const chefQty = Number(i.chefQty || 0);
         const inventory = inventoryItems.find(
           (item: any) => String(item._id) === String(i.inventoryItemId)
         );
@@ -188,10 +225,12 @@ export default function RestaurantRecipesPage() {
         return {
           inventoryItemId: i.inventoryItemId,
           name: inventory?.name || i.name || "Ingredient",
-          quantity: qty,
+          quantity: 0,
           unit: inventory?.unit ?? i.unit ?? "unit",
+          chefUnitId: i.chefUnitId,
+          chefQty,
           unitCost,
-          totalCost: Math.round(qty * unitCost * 100) / 100,
+          totalCost: 0,
         };
       });
     const payload = {
@@ -517,7 +556,7 @@ export default function RestaurantRecipesPage() {
                     ...f,
                     ingredients: [
                       ...f.ingredients,
-                      { inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "" },
+                      { inventoryItemId: "", name: "", quantity: "", unit: "unit", unitCost: "", chefUnitId: "", chefQty: "" },
                     ],
                   }))
                 }
@@ -527,112 +566,182 @@ export default function RestaurantRecipesPage() {
               </Button>
             </div>
             <div className="space-y-3">
-              {form.ingredients.map((ingredient, idx) => (
-                <div
-                  key={idx}
-                  className="flex flex-col gap-3 rounded-lg border border-[#e5e7eb] bg-white p-3 sm:flex-row sm:flex-wrap sm:items-end"
-                >
-                  <div className="min-w-0 flex-1 sm:min-w-[180px]">
-                    <AppReactSelect
-                      value={ingredient.inventoryItemId}
-                      options={inventoryOptions}
-                      onChange={(value) => {
-                        const inv = inventoryItems.find((i: any) => i._id === value);
-                        setForm((f) => {
-                          const copy = [...f.ingredients];
-                          copy[idx] = {
-                            ...copy[idx],
-                            inventoryItemId: value,
-                            name: inv?.name ?? "",
-                            unit: inv?.unit ?? "unit",
-                            unitCost:
-                              inv?.unitCost != null ? String(inv.unitCost) : copy[idx].unitCost,
-                          };
-                          return { ...f, ingredients: copy };
-                        });
-                      }}
-                      placeholder="Ingredient..."
-                    />
-                  </div>
-                  <Input
-                    value={ingredient.quantity}
-                    type="number"
-                    min="0"
-                    step="0.001"
-                    onChange={(e) =>
-                      setForm((f) => {
-                        const copy = [...f.ingredients];
-                        copy[idx] = { ...copy[idx], quantity: e.target.value };
-                        return { ...f, ingredients: copy };
-                      })
-                    }
-                    placeholder="Qty"
-                    className="w-24"
-                  />
-                  <div className="w-24">
-                    {ingredient.inventoryItemId ? (
-                      <div
-                        className="flex h-10 w-full items-center rounded-lg border border-[#e5e7eb] bg-slate-50 px-3 text-sm text-slate-700"
-                        title="Unit from ingredient (same unit everywhere)"
-                      >
-                        {ingredient.unit || "—"}
+              {form.ingredients.map((ingredient, idx) => {
+                const inv = ingredient.inventoryItemId
+                  ? inventoryItems.find((i: any) => String(i._id) === ingredient.inventoryItemId)
+                  : null;
+                const chefQtyNum = Number(ingredient.chefQty || 0);
+                const lineCost = ingredient.inventoryItemId && ingredient.chefUnitId && chefQtyNum > 0
+                  ? estimateChefCost(ingredient.inventoryItemId, ingredient.chefUnitId, chefQtyNum)
+                  : null;
+
+                const itemYields = ingredient.inventoryItemId
+                  ? yieldMappings.filter(
+                      (y: any) => String(y.inventoryItemId?._id ?? y.inventoryItemId) === ingredient.inventoryItemId
+                    )
+                  : [];
+                const relevantUnitIds = new Set(
+                  itemYields.map((y: any) => String(y.toUnitId?._id ?? y.toUnitId))
+                );
+                const filteredChefUnitOptions = relevantUnitIds.size > 0
+                  ? chefUnitOptions.filter((o) => relevantUnitIds.has(o.value))
+                  : chefUnitOptions;
+
+                const purchaseUnitName = inv?.purchaseUnitId?.name ?? inv?.purchaseUnitId?.abbreviation ?? null;
+                const yieldUnitName = inv?.yieldUnitId?.name ?? inv?.yieldUnitId?.abbreviation ?? null;
+                const yieldPerPurchase = inv?.yieldPerPurchaseUnit ?? null;
+
+                return (
+                  <div
+                    key={idx}
+                    className="rounded-lg border border-[#e5e7eb] bg-white p-3"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                      <div className="min-w-0 flex-1 sm:min-w-[180px]">
+                        <AppReactSelect
+                          label={idx === 0 ? "Ingredient" : undefined}
+                          value={ingredient.inventoryItemId}
+                          options={inventoryOptions}
+                          onChange={(value) => {
+                            const selected = inventoryItems.find((i: any) => i._id === value);
+                            setForm((f) => {
+                              const copy = [...f.ingredients];
+                              copy[idx] = {
+                                ...copy[idx],
+                                inventoryItemId: value,
+                                name: selected?.name ?? "",
+                                unit: selected?.unit ?? "unit",
+                                unitCost: selected?.unitCost != null ? String(selected.unitCost) : copy[idx].unitCost,
+                                chefUnitId: "",
+                                chefQty: "",
+                              };
+                              return { ...f, ingredients: copy };
+                            });
+                          }}
+                          placeholder="Select ingredient..."
+                        />
                       </div>
-                    ) : (
-                      <div className="flex h-10 w-full items-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 px-3 text-sm text-slate-400">
-                        Select ingredient
+                      <div className="min-w-[150px]">
+                        <AppReactSelect
+                          label={idx === 0 ? "Chef Unit" : undefined}
+                          options={filteredChefUnitOptions}
+                          value={ingredient.chefUnitId}
+                          onChange={(value) => {
+                            setForm((f) => {
+                              const copy = [...f.ingredients];
+                              copy[idx] = { ...copy[idx], chefUnitId: value ?? "" };
+                              return { ...f, ingredients: copy };
+                            });
+                          }}
+                          placeholder="Unit..."
+                        />
+                      </div>
+                      <div className="w-24">
+                        <Input
+                          label={idx === 0 ? "Qty" : undefined}
+                          type="number"
+                          step="any"
+                          min="0"
+                          placeholder="e.g. 2"
+                          value={ingredient.chefQty}
+                          onChange={(e) => {
+                            setForm((f) => {
+                              const copy = [...f.ingredients];
+                              copy[idx] = { ...copy[idx], chefQty: e.target.value };
+                              return { ...f, ingredients: copy };
+                            });
+                          }}
+                        />
+                      </div>
+                      <div className="min-w-[120px] rounded-md border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-xs text-[#6b7280]">
+                        {lineCost != null ? (
+                          <>Est. cost: <span className="font-semibold text-[#1f2937]">{fmt(lineCost)}</span></>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            ingredients: f.ingredients.filter((_, i) => i !== idx),
+                          }))
+                        }
+                        className="border-[#fecaca] text-[#dc2626] hover:bg-red-50"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+
+                    {inv && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-dashed border-[#d1d5db] bg-[#f9fafb] px-3 py-2 text-xs text-[#6b7280]">
+                        <span>
+                          Base unit: <strong className="text-[#374151]">{inv.unit ?? "—"}</strong>
+                        </span>
+                        <span className="hidden sm:inline text-[#d1d5db]">|</span>
+                        <span>
+                          Unit cost: <strong className="text-[#374151]">{fmt(Number(inv.unitCost ?? 0))}/{inv.unit ?? "unit"}</strong>
+                        </span>
+                        <span className="hidden sm:inline text-[#d1d5db]">|</span>
+                        <span>
+                          In stock:{" "}
+                          <strong className={Number(inv.currentStock ?? 0) <= Number(inv.minimumStock ?? 0) ? "text-[#dc2626]" : "text-[#059669]"}>
+                            {Number(inv.currentStock ?? 0).toLocaleString()} {inv.unit}
+                          </strong>
+                        </span>
+                        {purchaseUnitName && yieldUnitName && yieldPerPurchase != null && (
+                          <>
+                            <span className="hidden sm:inline text-[#d1d5db]">|</span>
+                            <span>
+                              Yield: <strong className="text-[#7b2cbf]">1 {purchaseUnitName} → {yieldPerPurchase} {yieldUnitName}s</strong>
+                            </span>
+                          </>
+                        )}
+                        {itemYields.length > 0 && (
+                          <>
+                            <span className="hidden sm:inline text-[#d1d5db]">|</span>
+                            <span className="text-[#5a189a]">
+                              {itemYields.map((y: any, yIdx: number) => {
+                                const fromName = y.fromUnitId?.abbreviation ?? y.fromUnitId?.name ?? "?";
+                                const toName = y.toUnitId?.abbreviation ?? y.toUnitId?.name ?? "?";
+                                const baseQtyVal = Number(y.baseUnitQty || 0);
+                                const toQty = Number(y.toQty || 1);
+                                const baseUnitCost = Number(inv.unitCost || 0);
+                                const perYieldCost =
+                                  baseQtyVal > 0 && toQty > 0
+                                    ? (baseUnitCost * baseQtyVal) / toQty
+                                    : null;
+                                return (
+                                  <span key={yIdx} className="inline-flex items-center gap-1">
+                                    {yIdx > 0 && " · "}
+                                    <strong>{y.fromQty} {fromName}</strong>
+                                    {baseQtyVal > 0 && (
+                                      <span className="text-slate-400 font-normal">({baseQtyVal} {inv.unit})</span>
+                                    )}
+                                    <strong> → {y.toQty} {toName}</strong>
+                                    {perYieldCost != null ? (
+                                      <span className="rounded bg-[#f5f3ff] px-1.5 py-0.5 text-[10px] font-semibold text-[#5a189a]">
+                                        {fmt(Math.round(perYieldCost * 100) / 100)}/{toName}
+                                      </span>
+                                    ) : (
+                                      <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
+                                        Missing base unit equivalent
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
-                  <div className="min-w-[140px] rounded-md border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-xs text-[#6b7280]">
-                    {(() => {
-                      const inventory = inventoryItems.find(
-                        (item: any) =>
-                          String(item._id) === String(ingredient.inventoryItemId)
-                      );
-                      const unitCost = Number(
-                        (inventory?.unitCost ?? ingredient.unitCost) || 0
-                      );
-                      const qty = Number(ingredient.quantity || 0);
-                      const lineCost = Number((qty * unitCost).toFixed(2));
-                      return (
-                        <>
-                          Cost/unit: {fmt(unitCost)} · Line: {fmt(lineCost)}
-                        </>
-                      );
-                    })()}
-                  </div>
-                  {(() => {
-                    const inv = ingredient.inventoryItemId
-                      ? inventoryItems.find(
-                          (i: any) => String(i._id) === String(ingredient.inventoryItemId)
-                        )
-                      : null;
-                    const qty = Number(ingredient.quantity || 0);
-                    const stock = Number(inv?.currentStock ?? 0);
-                    const unit = inv?.unit ?? ingredient.unit ?? "unit";
-                    const overStock = inv && qty > 0 && qty > stock;
-                    return overStock ? (
-                      <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:w-auto sm:min-w-[200px]">
-                        Uses more {inv?.name ?? "ingredient"} than in stock ({stock} {unit})
-                      </div>
-                    ) : null;
-                  })()}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setForm((f) => ({
-                        ...f,
-                        ingredients: f.ingredients.filter((_, i) => i !== idx),
-                      }))
-                    }
-                    className="border-[#fecaca] text-[#dc2626] hover:bg-red-50"
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

@@ -13,20 +13,25 @@ import {
 // ─── Housekeeping ────────────────────────────────────────
 export const createHousekeepingTaskSchema = z.object({
   roomId: z.string().min(1),
+  bookingId: z.string().optional(),
   assignedTo: z.string().optional(),
   taskType: z.enum(enumValues(HOUSEKEEPING_TASK_TYPE) as [string, ...string[]]),
   priority: z.enum(enumValues(PRIORITY) as [string, ...string[]]).optional(),
   notes: z.string().optional(),
+  dueAt: z.string().datetime().optional(),
 });
 
 export const updateHousekeepingTaskSchema = z.object({
-  assignedTo: z.string().optional(),
+  assignedTo: z.string().optional().nullable(),
   status: z.enum(enumValues(HOUSEKEEPING_STATUS) as [string, ...string[]]).optional(),
   priority: z.enum(enumValues(PRIORITY) as [string, ...string[]]).optional(),
   notes: z.string().optional(),
-  inspectedBy: z.string().optional(),
+  inspectedBy: z.string().optional().nullable(),
   inspectionNotes: z.string().optional(),
   linenChanged: z.boolean().optional(),
+  dueAt: z.string().datetime().optional().nullable(),
+  startedAt: z.string().datetime().optional().nullable(),
+  completedAt: z.string().datetime().optional().nullable(),
 });
 
 // ─── Lost & Found ────────────────────────────────────────

@@ -191,6 +191,9 @@ export const PATCH = withHandler(
           allowRoles: [
             USER_ROLES.TENANT_ADMIN,
             USER_ROLES.BRANCH_MANAGER,
+            USER_ROLES.RESTAURANT_MANAGER,
+            USER_ROLES.CASHIER,
+            USER_ROLES.WAITER,
             USER_ROLES.BAR_MANAGER,
             USER_ROLES.BARTENDER,
             USER_ROLES.BAR_CASHIER,

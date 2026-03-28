@@ -4,6 +4,7 @@ import { requireBranch } from "@/lib/auth-context";
 import { BOOKING_STATUS, ROOM_STATUS } from "@/constants";
 import Booking from "@/models/booking/Booking";
 import Room from "@/models/room/Room";
+import { findAvailableRoomsForCategoryStay } from "@/lib/booking-availability";
 import { availabilityQuerySchema } from "@/validations/booking";
 import mongoose from "mongoose";
 
@@ -18,44 +19,57 @@ export const GET = withHandler(
 
     const excludeBookingId = req.nextUrl.searchParams.get("excludeBookingId");
 
-    const overlapFilter: Record<string, unknown> = {
-      tenantId,
-      branchId,
-      status: { $nin: [BOOKING_STATUS.CANCELLED, BOOKING_STATUS.CHECKED_OUT, BOOKING_STATUS.NO_SHOW] },
-      checkInDate: { $lt: requestedCheckOut },
-      checkOutDate: { $gt: requestedCheckIn },
-      roomId: { $exists: true, $ne: null },
-    };
+    let availableRooms;
 
-    if (excludeBookingId && mongoose.Types.ObjectId.isValid(excludeBookingId)) {
-      overlapFilter._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
-    }
-
-    const overlappingBookings = await Booking.find(overlapFilter as Record<string, unknown>)
-      .select("roomId")
-      .lean();
-
-    const occupiedRoomIds = overlappingBookings
-      .map((b) => b.roomId)
-      .filter(Boolean);
-
-    const roomFilter: Record<string, unknown> = {
-      tenantId,
-      branchId,
-      isActive: true,
-      _id: { $nin: occupiedRoomIds },
-      status: {
-        $nin: [ROOM_STATUS.OCCUPIED, ROOM_STATUS.MAINTENANCE, ROOM_STATUS.OUT_OF_SERVICE],
-      },
-    };
     if (data.roomCategoryId) {
-      roomFilter.roomCategoryId = data.roomCategoryId;
-    }
+      availableRooms = await findAvailableRoomsForCategoryStay({
+        tenantId,
+        branchId,
+        roomCategoryId: data.roomCategoryId,
+        checkInDate: requestedCheckIn,
+        checkOutDate: requestedCheckOut,
+        ...(excludeBookingId ? { excludeBookingId } : {}),
+      });
+    } else {
+      const overlapFilter: Record<string, unknown> = {
+        tenantId,
+        branchId,
+        status: { $nin: [BOOKING_STATUS.CANCELLED, BOOKING_STATUS.CHECKED_OUT, BOOKING_STATUS.NO_SHOW] },
+        checkInDate: { $lt: requestedCheckOut },
+        checkOutDate: { $gt: requestedCheckIn },
+        roomId: { $exists: true, $ne: null },
+      };
 
-    const availableRooms = await Room.find(roomFilter as Record<string, unknown>)
-      .populate("roomCategoryId")
-      .sort({ roomNumber: 1 })
-      .lean();
+      if (excludeBookingId && mongoose.Types.ObjectId.isValid(excludeBookingId)) {
+        overlapFilter._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
+      }
+
+      const overlappingBookings = await Booking.find(overlapFilter as Record<string, unknown>)
+        .select("roomId")
+        .lean();
+
+      const occupiedRoomIds = overlappingBookings
+        .map((b) => b.roomId)
+        .filter(Boolean);
+
+      availableRooms = await Room.find({
+        tenantId,
+        branchId,
+        isActive: true,
+        _id: { $nin: occupiedRoomIds },
+        status: {
+          $nin: [
+            ROOM_STATUS.OCCUPIED,
+            ROOM_STATUS.CLEANING,
+            ROOM_STATUS.MAINTENANCE,
+            ROOM_STATUS.OUT_OF_SERVICE,
+          ],
+        },
+      } as Record<string, unknown>)
+        .populate("roomCategoryId")
+        .sort({ roomNumber: 1 })
+        .lean();
+    }
 
     return successResponse(availableRooms, 200, {
       checkInDate: data.checkInDate,

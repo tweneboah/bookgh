@@ -6,6 +6,10 @@ export interface IRecipeIngredient {
   name: string;
   quantity: number;
   unit: string;
+  /** If set, references the RestaurantUnit the chef uses for this ingredient (e.g. "1 scoop"). */
+  chefUnitId?: Schema.Types.ObjectId;
+  /** Quantity in the chef's unit (e.g. 1 scoop, 2 ladles). Converted to base unit internally. */
+  chefQty?: number;
   unitCost: number;
   totalCost: number;
 }
@@ -38,6 +42,8 @@ const ingredientSchema = new Schema<IRecipeIngredient>(
     name: { type: String, required: true },
     quantity: { type: Number, required: true, min: 0 },
     unit: { type: String, required: true },
+    chefUnitId: { type: Schema.Types.ObjectId, ref: "RestaurantUnit" },
+    chefQty: { type: Number, min: 0 },
     unitCost: { type: Number, required: true, min: 0 },
     totalCost: { type: Number, required: true, min: 0 },
   },

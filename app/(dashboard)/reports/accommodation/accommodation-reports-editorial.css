@@ -1,0 +1,37 @@
+/* Accommodation reports — Solar Curator editorial (scoped) */
+.acc-rep-editorial {
+  --ar-primary: #9b3f00;
+  --ar-primary-container: #ff7a2c;
+  --ar-on-primary-container: #401600;
+  --ar-background: #f5f6f7;
+  --ar-surface: #f5f6f7;
+  --ar-surface-low: #eff1f2;
+  --ar-surface-lowest: #ffffff;
+  --ar-surface-container: #e6e8ea;
+  --ar-surface-container-high: #e0e3e4;
+  --ar-surface-container-highest: #dadddf;
+  --ar-on-surface: #2c2f30;
+  --ar-on-surface-variant: #595c5d;
+  --ar-tertiary: #7a5400;
+}
+
+.acc-rep-editorial .acc-material {
+  font-family: "Material Symbols Outlined", sans-serif;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  font-size: 1.25rem;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.acc-rep-editorial .acc-editorial-gradient {
+  background: linear-gradient(135deg, #ff7a2c 0%, #9b3f00 100%);
+}
+
+.acc-rep-editorial .acc-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.acc-rep-editorial .acc-hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

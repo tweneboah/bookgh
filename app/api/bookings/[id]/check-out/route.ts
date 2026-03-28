@@ -22,6 +22,7 @@ import {
   getPaymentModelForDepartment,
 } from "@/lib/department-ledger";
 import { getInvoiceModelForDepartment } from "@/lib/department-invoice";
+import { ensureHousekeepingTaskAfterCheckout } from "@/lib/housekeeping-checkout";
 
 function generateInvoiceNumber(): string {
   return `INV-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -261,6 +262,13 @@ export const POST = withHandler(
 
     if (booking.roomId) {
       await Room.findByIdAndUpdate(booking.roomId, { $set: { status: ROOM_STATUS.CLEANING } });
+      await ensureHousekeepingTaskAfterCheckout({
+        tenantId,
+        branchId,
+        roomId: booking.roomId,
+        bookingId: booking._id,
+        createdBy: auth.userId,
+      });
     }
 
     await Booking.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true });

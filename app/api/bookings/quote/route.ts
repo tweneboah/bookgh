@@ -1,9 +1,7 @@
 import { withHandler } from "@/lib/with-handler";
 import { successResponse } from "@/lib/api-response";
 import { requireBranch } from "@/lib/auth-context";
-import { BOOKING_STATUS, ROOM_STATUS } from "@/constants";
-import Booking from "@/models/booking/Booking";
-import Room from "@/models/room/Room";
+import { findAvailableRoomsForCategoryStay } from "@/lib/booking-availability";
 import { resolveRoomRate } from "@/lib/accommodation-rate";
 import { getSuggestedDeposit } from "@/lib/accommodation-policies";
 import Branch from "@/models/branch/Branch";
@@ -25,48 +23,13 @@ export const GET = withHandler(
     const requestedCheckIn = new Date(data.checkInDate);
     const requestedCheckOut = new Date(data.checkOutDate);
 
-    const overlapFilter: Record<string, unknown> = {
+    const availableRooms = await findAvailableRoomsForCategoryStay({
       tenantId,
       branchId,
-      status: {
-        $nin: [
-          BOOKING_STATUS.CANCELLED,
-          BOOKING_STATUS.CHECKED_OUT,
-          BOOKING_STATUS.NO_SHOW,
-        ],
-      },
-      checkInDate: { $lt: requestedCheckOut },
-      checkOutDate: { $gt: requestedCheckIn },
-      roomId: { $exists: true, $ne: null },
-    };
-
-    const overlappingBookings = await Booking.find(overlapFilter as Record<string, unknown>)
-      .select("roomId")
-      .lean();
-
-    const occupiedRoomIds = overlappingBookings
-      .map((b) => b.roomId)
-      .filter(Boolean);
-
-    const roomFilter: Record<string, unknown> = {
-      tenantId,
-      branchId,
-      isActive: true,
       roomCategoryId: data.roomCategoryId,
-      _id: { $nin: occupiedRoomIds },
-      status: {
-        $nin: [
-          ROOM_STATUS.OCCUPIED,
-          ROOM_STATUS.MAINTENANCE,
-          ROOM_STATUS.OUT_OF_SERVICE,
-        ],
-      },
-    };
-
-    const availableRooms = await Room.find(roomFilter as Record<string, unknown>)
-      .populate("roomCategoryId")
-      .sort({ roomNumber: 1 })
-      .lean();
+      checkInDate: requestedCheckIn,
+      checkOutDate: requestedCheckOut,
+    });
 
     const quote = await resolveRoomRate({
       tenantId,
@@ -93,9 +56,13 @@ export const GET = withHandler(
           totalAmount: quote.totalAmount,
           numberOfNights: quote.numberOfNights,
           basePrice: quote.basePrice,
+          categoryName: quote.categoryName,
           corporateDiscountRate: quote.corporateDiscountRate,
           corporateBaseRate: quote.corporateBaseRate,
           suggestedDeposit,
+          /** Per-night base → rule steps (modifier + rate after); plus rule scope summary. */
+          breakdown: quote.breakdown,
+          appliedRulesSummary: quote.appliedRulesSummary,
         },
       },
       200,

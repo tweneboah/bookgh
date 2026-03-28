@@ -44,6 +44,8 @@ import {
   DollarSign,
   Gamepad2,
   Layout,
+  ClipboardList,
+  LayoutGrid,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -88,6 +90,8 @@ interface NavItem {
   icon: LucideIcon;
   /** Accommodation/Restaurant: user must have at least one of these permissions to see the link */
   requiredPermissions?: string[];
+  /** Nested links (e.g. Housekeeping hub). */
+  children?: NavItem[];
 }
 
 interface NavSection {
@@ -172,15 +176,21 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/inventory-procurement/suppliers?department=restaurant", label: "Suppliers", icon: Briefcase, requiredPermissions: [RESTAURANT_PERMISSIONS.SUPPLIERS_VIEW] },
       { href: "/inventory-procurement/purchase-orders?department=restaurant", label: "Purchase Orders", icon: ShoppingCart, requiredPermissions: [RESTAURANT_PERMISSIONS.PURCHASE_ORDERS_VIEW] },
       { href: "/inventory-procurement/transfers?department=restaurant", label: "Transfers", icon: GitBranch, requiredPermissions: [RESTAURANT_PERMISSIONS.TRANSFERS_VIEW] },
-      { href: "/restaurant/stock-control", label: "Stock Control", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
+      { href: "/restaurant/movement-flow", label: "Movement Flow", icon: Layers, requiredPermissions: [RESTAURANT_PERMISSIONS.MOVEMENT_FLOW_VIEW] },
+      { href: "/restaurant/stock-control", label: "Stock Control (Overview)", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
+      { href: "/restaurant/stock-control/movement", label: "Record Movement", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
+      { href: "/restaurant/stock-control/physical-count", label: "Physical Count", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
+      { href: "/restaurant/stock-control/receive-pos", label: "Receive POs", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
+      { href: "/restaurant/stock-control/receipts", label: "PO Receipts", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
+      { href: "/restaurant/stock-control/ledger", label: "Movement Ledger", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
       { href: "/pos/inventory?department=restaurant", label: "Inventory", icon: Archive, requiredPermissions: [RESTAURANT_PERMISSIONS.INVENTORY_VIEW] },
+      { href: "/restaurant/units", label: "Units & Yields", icon: Tags, requiredPermissions: [RESTAURANT_PERMISSIONS.INVENTORY_VIEW, RESTAURANT_PERMISSIONS.RECIPES_VIEW, RESTAURANT_PERMISSIONS.PRODUCTION_VIEW] },
       { href: "/restaurant/recipes", label: "Recipe Engine", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.RECIPES_VIEW] },
       { href: "/restaurant/production", label: "Production Batches", icon: Box, requiredPermissions: [RESTAURANT_PERMISSIONS.PRODUCTION_VIEW] },
       { href: "/pos/menu-items?department=restaurant", label: "Menu Items", icon: UtensilsCrossed, requiredPermissions: [RESTAURANT_PERMISSIONS.MENU_ITEMS_VIEW] },
       { href: "/pos/tables?department=restaurant", label: "Tables", icon: LayoutDashboard, requiredPermissions: [RESTAURANT_PERMISSIONS.TABLES_VIEW] },
       { href: "/pos/orders?department=restaurant", label: "Orders", icon: ShoppingCart, requiredPermissions: [RESTAURANT_PERMISSIONS.ORDERS_VIEW, RESTAURANT_PERMISSIONS.ORDERS_CREATE] },
       { href: "/restaurant/kds", label: "KDS Workflow", icon: Clock, requiredPermissions: [RESTAURANT_PERMISSIONS.KDS_VIEW] },
-      { href: "/restaurant/inventory-scan", label: "Barcode Scan", icon: Search, requiredPermissions: [RESTAURANT_PERMISSIONS.INVENTORY_SCAN] },
       { href: "/reports/restaurant", label: "Restaurant Reports", icon: BarChart3, requiredPermissions: [RESTAURANT_PERMISSIONS.REPORTS_VIEW] },
       { href: "/reports/restaurant-consolidated", label: "Consolidated Reports", icon: Building2, requiredPermissions: [RESTAURANT_PERMISSIONS.REPORTS_VIEW] },
       { href: "/payments?department=restaurant", label: "Payments", icon: CreditCard, requiredPermissions: [RESTAURANT_PERMISSIONS.PAYMENTS_VIEW] },
@@ -254,6 +264,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/front-desk-board", label: "Front Desk Board", icon: Gauge, requiredPermissions: [ACCOMMODATION_PERMISSIONS.CHECK_IN] },
       { href: "/bookings", label: "Bookings", icon: Calendar, requiredPermissions: [ACCOMMODATION_PERMISSIONS.BOOKING_CREATE, ACCOMMODATION_PERMISSIONS.CHECK_IN] },
       { href: "/bookings/calendar", label: "Booking Calendar", icon: Calendar, requiredPermissions: [ACCOMMODATION_PERMISSIONS.BOOKING_CREATE, ACCOMMODATION_PERMISSIONS.CHECK_IN] },
+      { href: "/bookings/transactions", label: "Booking transactions", icon: Receipt, requiredPermissions: [ACCOMMODATION_PERMISSIONS.PAYMENTS_VIEW, ACCOMMODATION_PERMISSIONS.PAYMENTS_PROCESS, ACCOMMODATION_PERMISSIONS.BOOKING_CREATE] },
       { href: "/rooms", label: "Rooms", icon: BedDouble, requiredPermissions: [ACCOMMODATION_PERMISSIONS.ROOMS_VIEW] },
       { href: "/rooms/floors", label: "Floors", icon: Building2, requiredPermissions: [ACCOMMODATION_PERMISSIONS.ROOMS_VIEW] },
       { href: "/guests", label: "Guests", icon: Users, requiredPermissions: [ACCOMMODATION_PERMISSIONS.GUESTS_VIEW] },
@@ -261,7 +272,38 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/pricing-rules?department=accommodation", label: "Pricing Rules", icon: Tags, requiredPermissions: [ACCOMMODATION_PERMISSIONS.PRICING_VIEW] },
       { href: "/accommodation/policies", label: "Accommodation Policies", icon: ShieldCheck, requiredPermissions: [ACCOMMODATION_PERMISSIONS.ROOMS_VIEW] },
       { href: "/corporate-accounts", label: "Corporate Accounts", icon: Briefcase, requiredPermissions: [ACCOMMODATION_PERMISSIONS.GUESTS_VIEW, ACCOMMODATION_PERMISSIONS.BOOKING_CREATE] },
-      { href: "/housekeeping", label: "Housekeeping", icon: Sparkles, requiredPermissions: [ACCOMMODATION_PERMISSIONS.HOUSEKEEPING_VIEW] },
+      {
+        href: "/housekeeping",
+        label: "Housekeeping",
+        icon: Sparkles,
+        requiredPermissions: [ACCOMMODATION_PERMISSIONS.HOUSEKEEPING_VIEW],
+        children: [
+          {
+            href: "/housekeeping",
+            label: "Overview",
+            icon: LayoutDashboard,
+            requiredPermissions: [ACCOMMODATION_PERMISSIONS.HOUSEKEEPING_VIEW],
+          },
+          {
+            href: "/housekeeping/tasks",
+            label: "Tasks",
+            icon: ClipboardList,
+            requiredPermissions: [ACCOMMODATION_PERMISSIONS.HOUSEKEEPING_VIEW],
+          },
+          {
+            href: "/housekeeping/board",
+            label: "Room board",
+            icon: LayoutGrid,
+            requiredPermissions: [ACCOMMODATION_PERMISSIONS.HOUSEKEEPING_VIEW],
+          },
+          {
+            href: "/housekeeping/reports",
+            label: "Reports",
+            icon: BarChart3,
+            requiredPermissions: [ACCOMMODATION_PERMISSIONS.HOUSEKEEPING_VIEW],
+          },
+        ],
+      },
       { href: "/maintenance", label: "Maintenance", icon: Wrench, requiredPermissions: [ACCOMMODATION_PERMISSIONS.MAINTENANCE_VIEW] },
       { href: "/assets", label: "Assets", icon: Square, requiredPermissions: [ACCOMMODATION_PERMISSIONS.ROOMS_VIEW, ACCOMMODATION_PERMISSIONS.MAINTENANCE_VIEW] },
       { href: "/lost-and-found", label: "Lost & Found", icon: Search, requiredPermissions: [ACCOMMODATION_PERMISSIONS.LOST_AND_FOUND_MANAGE] },
@@ -460,6 +502,19 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+/** Flatten for active-state matching: only leaf links (parent with children is a label, not a duplicate href). */
+function flattenNavItemsForActive(items: NavItem[]): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of items) {
+    if (item.children?.length) {
+      out.push(...item.children);
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
+
 /** Returns the single href that should be active (longest matching) so only one item is active per section. */
 function getActiveHref(pathname: string, items: NavItem[]): string | null {
   const path = pathname.replace(/\?.*/, "");
@@ -556,11 +611,20 @@ export function Sidebar() {
     ? (Object.values(ACCOMMODATION_PERMISSIONS) as string[])
     : (accMatrixKey ? ACCOMMODATION_ROLE_PERMISSION_MATRIX[accMatrixKey] ?? [] : []);
 
-  const getAccommodationFilteredItems = (items: NavItem[]) => {
-    return items.filter((item) => {
-      if (!item.requiredPermissions?.length) return true;
-      return item.requiredPermissions.some((p) => accAllowedPermissions.includes(p));
-    });
+  const getAccommodationFilteredItems = (items: NavItem[]): NavItem[] => {
+    const check = (it: NavItem) =>
+      !it.requiredPermissions?.length ||
+      it.requiredPermissions.some((p) => accAllowedPermissions.includes(p));
+    return items
+      .map((item) => {
+        if (item.children?.length) {
+          const children = item.children.filter(check);
+          if (!check(item) || children.length === 0) return null;
+          return { ...item, children };
+        }
+        return check(item) ? item : null;
+      })
+      .filter((x): x is NavItem => x != null);
   };
 
   const isRestAdmin = REST_ADMIN_ROLES.some(
@@ -715,7 +779,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => dispatch(toggleSidebarCollapsed())}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#ff6d00] to-[#ff9e00] text-white shadow-md shadow-orange-500/20 transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-orange-500/25 lg:flex"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-[#ff6d00] to-[#ff9e00] text-white shadow-md shadow-orange-500/20 transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-orange-500/25 lg:flex"
               aria-label="Expand sidebar"
             >
               <ChevronRight className="h-5 w-5" aria-hidden />
@@ -726,7 +790,7 @@ export function Sidebar() {
                 href="/dashboard"
                 className="flex min-w-0 flex-1 items-center gap-3 rounded-lg transition-all duration-200 hover:opacity-90 hover:translate-x-0.5"
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#ff6d00] to-[#ff9e00] text-white shadow-md shadow-orange-500/20">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-[#ff6d00] to-[#ff9e00] text-white shadow-md shadow-orange-500/20">
                   <span className="text-sm font-bold">B</span>
                 </div>
                 <span className="truncate text-base font-bold text-slate-900">Bookgh</span>
@@ -772,7 +836,7 @@ export function Sidebar() {
                 >
                   <SectionIcon className="h-5 w-5" aria-hidden />
                   {section.badge != null && section.badge > 0 && (
-                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-[#ff6d00] px-1 text-[10px] font-semibold text-white">
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ff6d00] px-1 text-[10px] font-semibold text-white">
                       {section.badge > 99 ? "99+" : section.badge}
                     </span>
                   )}
@@ -797,12 +861,12 @@ export function Sidebar() {
           return createPortal(
             <>
               <div
-                className="fixed inset-0 z-[9998]"
+                className="fixed inset-0 z-9998"
                 aria-hidden
                 onClick={closeFlyout}
               />
               <div
-                className="fixed z-[9999] flex min-w-[220px] flex-col rounded-xl border border-slate-200 bg-white shadow-xl"
+                className="fixed z-9999 flex min-w-[220px] flex-col rounded-xl border border-slate-200 bg-white shadow-xl"
                 style={{
                   top,
                   left: flyoutRect.left,
@@ -833,12 +897,16 @@ export function Sidebar() {
                                     : section.title === "Maintenance Department"
                                       ? getMaintenanceDeptFilteredItems(section.items)
                                       : section.items;
-                    const activeHref = getActiveHref(pathname, sectionItems);
-                    return sectionItems.map((item) => {
+                    const flatForActive = flattenNavItemsForActive(sectionItems);
+                    const activeHref = getActiveHref(pathname, flatForActive);
+                    const flyoutLinks = sectionItems.flatMap((item) =>
+                      item.children?.length ? item.children : [item]
+                    );
+                    return flyoutLinks.map((item) => {
                       const active = item.href === activeHref;
                       return (
                         <Link
-                          key={item.href}
+                          key={item.href + item.label}
                           href={item.href}
                           onClick={closeFlyout}
                           className={cn(
@@ -892,7 +960,7 @@ export function Sidebar() {
                       <SectionIcon className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
                       <span className="truncate">{section.title}</span>
                       {section.badge != null && section.badge > 0 && (
-                        <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[#ff6d00] px-1.5 text-[10px] font-bold text-white">
+                        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ff6d00] px-1.5 text-[10px] font-bold text-white">
                           {section.badge > 99 ? "99+" : section.badge}
                         </span>
                       )}
@@ -926,16 +994,37 @@ export function Sidebar() {
                                           : section.title === "Maintenance Department"
                                             ? getMaintenanceDeptFilteredItems(section.items)
                                             : section.items;
-                          const activeHref = getActiveHref(pathname, sectionItems);
-                          return sectionItems.map((item) => (
-                            <li key={item.href}>
-                              <NavLink
-                                {...item}
-                                collapsed={false}
-                                active={item.href === activeHref}
-                              />
-                            </li>
-                          ));
+                          const flatForActive = flattenNavItemsForActive(sectionItems);
+                          const activeHref = getActiveHref(pathname, flatForActive);
+                          return sectionItems.map((item) =>
+                            item.children?.length ? (
+                              <li key={item.href} className="space-y-0.5">
+                                <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                  <item.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                  <span className="truncate">{item.label}</span>
+                                </div>
+                                <ul className="ml-1 space-y-0.5 border-l border-slate-200/90 pl-2">
+                                  {item.children.map((child) => (
+                                    <li key={child.href}>
+                                      <NavLink
+                                        {...child}
+                                        collapsed={false}
+                                        active={child.href === activeHref}
+                                      />
+                                    </li>
+                                  ))}
+                                </ul>
+                              </li>
+                            ) : (
+                              <li key={item.href}>
+                                <NavLink
+                                  {...item}
+                                  collapsed={false}
+                                  active={item.href === activeHref}
+                                />
+                              </li>
+                            )
+                          );
                         })()}
                       </ul>
                     </div>

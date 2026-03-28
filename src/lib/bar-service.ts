@@ -9,7 +9,8 @@ import {
   normalizeInventoryDepartment,
 } from "@/lib/department-inventory";
 import { getRecipeModelForDepartment } from "@/lib/department-restaurant";
-import { convertToBaseUnitQuantity } from "@/lib/unit-conversion";
+import { convertToBaseUnitQuantity, buildYieldMap, convertChefQtyToBaseQty } from "@/lib/unit-conversion";
+import ItemYield from "@/models/restaurant/ItemYield";
 import {
   DEPARTMENT,
   BOOKING_STATUS,
@@ -141,6 +142,13 @@ async function buildRecipeRequirementMap(input: {
   const recipeMap = new Map(
     recipeDocs.map((recipe: any) => [String(recipe.menuItemId), recipe])
   );
+  const allIngredientIds = new Set<string>();
+  const chefIngredientRows: Array<{
+    inventoryItemId: string;
+    chefUnitId: string;
+    chefQty: number;
+    orderQty: number;
+  }> = [];
   const rawRequirementMap = new Map<string, { requiredQty: number; unit: string }>();
 
   for (const item of input.items) {
@@ -148,26 +156,40 @@ async function buildRecipeRequirementMap(input: {
     if (!menuItem) {
       throw new NotFoundError(`Menu item ${String(item.menuItemId)}`);
     }
-    const activeRecipe =
-      Array.isArray(menuItem.recipe) && menuItem.recipe.length > 0
-        ? menuItem.recipe
-        : recipeMap.get(String(menuItem._id))?.ingredients ?? [];
+    const hasInlineRecipe = Array.isArray(menuItem.recipe) && menuItem.recipe.length > 0;
+    const recipeDoc = recipeMap.get(String(menuItem._id));
+    const activeRecipe = hasInlineRecipe
+      ? menuItem.recipe
+      : recipeDoc?.ingredients ?? [];
     if (!Array.isArray(activeRecipe) || activeRecipe.length === 0) continue;
 
     for (const ingredient of activeRecipe) {
       const key = String(ingredient.inventoryItemId);
-      const existing = rawRequirementMap.get(key);
-      const ingredientRequired = Number(ingredient.quantity) * Number(item.quantity);
-      rawRequirementMap.set(key, {
-        requiredQty: Number(
-          ((existing?.requiredQty ?? 0) + ingredientRequired).toFixed(4)
-        ),
-        unit: String(ingredient.unit ?? "unit"),
-      });
+      allIngredientIds.add(key);
+      const baseQty = Number(ingredient.quantity ?? 0);
+      const chefQty = Number(ingredient.chefQty ?? 0);
+      const chefUnitId = ingredient.chefUnitId ? String(ingredient.chefUnitId) : "";
+      if (baseQty > 0) {
+        const existing = rawRequirementMap.get(key);
+        const ingredientRequired = baseQty * Number(item.quantity);
+        rawRequirementMap.set(key, {
+          requiredQty: Number(
+            ((existing?.requiredQty ?? 0) + ingredientRequired).toFixed(4)
+          ),
+          unit: String(ingredient.unit ?? "unit"),
+        });
+      } else if (chefQty > 0 && chefUnitId) {
+        chefIngredientRows.push({
+          inventoryItemId: key,
+          chefUnitId,
+          chefQty,
+          orderQty: Number(item.quantity),
+        });
+      }
     }
   }
 
-  const inventoryIds = Array.from(rawRequirementMap.keys());
+  const inventoryIds = Array.from(allIngredientIds);
   if (!inventoryIds.length) return rawRequirementMap;
   const InventoryItemModel = getInventoryItemModelForDepartment(department);
   const inventoryItems = await InventoryItemModel.find({
@@ -176,17 +198,79 @@ async function buildRecipeRequirementMap(input: {
     branchId: input.branchId,
   } as any).lean();
   const inventoryMap = new Map(inventoryItems.map((row: any) => [String(row._id), row]));
+
+  const yieldDocs = inventoryIds.length > 0
+    ? await (await import("@/models/restaurant/ItemYield")).default.find({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        inventoryItemId: { $in: inventoryIds },
+      } as any)
+        .populate("fromUnitId", "name abbreviation")
+        .populate("toUnitId", "name abbreviation")
+        .lean()
+    : [];
+  const yieldMap = buildYieldMap(yieldDocs as any[]);
+
+  for (const row of chefIngredientRows) {
+    const item = inventoryMap.get(row.inventoryItemId);
+    if (!item) continue;
+    const baseQty = convertChefQtyToBaseQty({
+      inventoryItemId: row.inventoryItemId,
+      chefQty: row.chefQty,
+      chefUnitIdOrName: row.chefUnitId,
+      item,
+      yieldMap,
+    });
+    if (baseQty == null || baseQty <= 0) {
+      throw new BadRequestError(
+        `Missing chef-unit conversion for ${item.name}. Define base unit equivalent in Units & Yields (e.g. 1 bag = 25 ${item.unit}) or add inventory unit conversion.`
+      );
+    }
+    const existing = rawRequirementMap.get(row.inventoryItemId);
+    const ingredientRequired = baseQty * row.orderQty;
+    rawRequirementMap.set(row.inventoryItemId, {
+      requiredQty: Number(
+        ((existing?.requiredQty ?? 0) + ingredientRequired).toFixed(4)
+      ),
+      unit: String(item.unit ?? "unit"),
+    });
+  }
+
   const normalizedRequirementMap = new Map<string, { requiredQty: number; unit: string }>();
 
   for (const [inventoryId, requirement] of rawRequirementMap.entries()) {
     const item = inventoryMap.get(inventoryId);
     if (!item) throw new NotFoundError(`Inventory item ${inventoryId}`);
+
     const converted = convertToBaseUnitQuantity({
       item,
       quantity: requirement.requiredQty,
       enteredUnit: requirement.unit,
     });
-    if (!converted) {
+    if (converted) {
+      normalizedRequirementMap.set(inventoryId, {
+        requiredQty: converted.baseQuantity,
+        unit: String(item.unit ?? "unit"),
+      });
+      continue;
+    }
+
+    const chefConverted = convertChefQtyToBaseQty({
+      inventoryItemId: inventoryId,
+      chefQty: requirement.requiredQty,
+      chefUnitIdOrName: requirement.unit,
+      item,
+      yieldMap,
+    });
+    if (chefConverted != null) {
+      normalizedRequirementMap.set(inventoryId, {
+        requiredQty: chefConverted,
+        unit: String(item.unit ?? "unit"),
+      });
+      continue;
+    }
+
+    if (requirement.requiredQty > 0) {
       const hint =
         item.unit === "unit" && requirement.unit === "ml" && !(item as any).volumeMl
           ? " For items tracked in 'unit', add Volume (ml) on the inventory item to allow ml in recipes, or use unit in the recipe."
@@ -195,10 +279,6 @@ async function buildRecipeRequirementMap(input: {
         `Unit '${requirement.unit}' is not configured for ${item.name}. Base unit is ${item.unit}.${hint}`
       );
     }
-    normalizedRequirementMap.set(inventoryId, {
-      requiredQty: converted.baseQuantity,
-      unit: String(item.unit ?? "unit"),
-    });
   }
 
   return normalizedRequirementMap;

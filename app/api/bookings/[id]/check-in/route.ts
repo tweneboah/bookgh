@@ -6,8 +6,21 @@ import Booking from "@/models/booking/Booking";
 import Guest from "@/models/booking/Guest";
 import Room from "@/models/room/Room";
 import { checkInSchema } from "@/validations/booking";
-import { BOOKING_STATUS, ROOM_STATUS } from "@/constants";
+import {
+  BOOKING_STATUS,
+  ROOM_STATUS,
+  DEPARTMENT,
+  INVOICE_STATUS,
+  PAYMENT_METHOD,
+  PAYMENT_STATUS,
+} from "@/constants";
+import { getPaymentModelForDepartment } from "@/lib/department-ledger";
+import { getInvoiceModelForDepartment } from "@/lib/department-invoice";
 import mongoose from "mongoose";
+
+function generateInvoiceNumber(): string {
+  return `INV-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+}
 
 export const POST = withHandler(
   async (req, { auth, params }) => {
@@ -45,7 +58,93 @@ export const POST = withHandler(
     }
 
     if (room.status !== ROOM_STATUS.AVAILABLE && room.status !== ROOM_STATUS.RESERVED) {
-      throw new BadRequestError("Room is not available for check-in");
+      const roomCode = room.roomNumber ? `Room ${room.roomNumber}` : "Selected room";
+      const currentStatus = String(room.status ?? "unknown").replace(/([A-Z])/g, " $1").trim().toLowerCase();
+      throw new BadRequestError(
+        `${roomCode} cannot be checked in because it is currently ${currentStatus}. ` +
+          "Choose an available/reserved room or refresh availability and try again."
+      );
+    }
+
+    const previousDeposit = Number(booking.depositPaid ?? 0);
+    const newTotalDeposit =
+      data.depositPaid !== undefined && data.depositPaid !== null
+        ? Number(data.depositPaid)
+        : previousDeposit;
+    const collectedNow = Math.round(Math.max(0, newTotalDeposit - previousDeposit) * 100) / 100;
+
+    const paymentModel = getPaymentModelForDepartment(DEPARTMENT.ACCOMMODATION);
+
+    if (collectedNow > 0) {
+      const existingLedger = await paymentModel
+        .findOne({
+          tenantId,
+          branchId,
+          status: PAYMENT_STATUS.SUCCESS,
+          "metadata.source": "checkIn",
+          "metadata.bookingId": String(id),
+        } as any)
+        .lean();
+
+      if (!existingLedger) {
+        const InvoiceModel = getInvoiceModelForDepartment(DEPARTMENT.ACCOMMODATION);
+
+        let invoiceNumber = generateInvoiceNumber();
+        let exists = await InvoiceModel.exists({
+          tenantId,
+          branchId,
+          invoiceNumber,
+        } as any);
+        while (exists) {
+          invoiceNumber = generateInvoiceNumber();
+          exists = await InvoiceModel.exists({
+            tenantId,
+            branchId,
+            invoiceNumber,
+          } as any);
+        }
+
+        const invoice = await InvoiceModel.create({
+          tenantId,
+          branchId,
+          department: DEPARTMENT.ACCOMMODATION,
+          invoiceNumber,
+          bookingId: booking._id,
+          guestId: booking.guestId,
+          items: [
+            {
+              description: `Deposit at check-in (${booking.bookingReference})`,
+              category: "accommodation",
+              quantity: 1,
+              unitPrice: collectedNow,
+              amount: collectedNow,
+            },
+          ],
+          subtotal: collectedNow,
+          totalAmount: collectedNow,
+          paidAmount: collectedNow,
+          status: INVOICE_STATUS.PAID,
+          notes: "Recorded when guest checked in",
+          createdBy: auth.userId,
+        } as any);
+
+        await paymentModel.create({
+          tenantId,
+          branchId,
+          department: DEPARTMENT.ACCOMMODATION,
+          invoiceId: invoice._id,
+          guestId: booking.guestId,
+          amount: collectedNow,
+          paymentMethod: data.paymentMethod ?? PAYMENT_METHOD.CASH,
+          status: PAYMENT_STATUS.SUCCESS,
+          processedBy: auth.userId,
+          metadata: {
+            source: "checkIn",
+            bookingId: String(booking._id),
+            bookingReference: booking.bookingReference,
+          },
+        } as any);
+      }
     }
 
     const updateData: Record<string, unknown> = {

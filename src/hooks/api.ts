@@ -1,5 +1,17 @@
-import apiClient from "@/lib/api-client";
+import apiClient, { extractData } from "@/lib/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+type ListParams = Record<string, unknown>;
+
+function qs(params?: ListParams): string {
+  if (!params || Object.keys(params).length === 0) return "";
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") search.set(k, String(v));
+  }
+  const s = search.toString();
+  return s ? `?${s}` : "";
+}
 
 // =============================================================================
 // AUTH
@@ -463,6 +475,18 @@ export function useCreateBooking() {
   });
 }
 
+/** Creates N linked bookings in one request: enforces category availability and rolls back on failure. */
+export function useCreateGroupBookings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      apiClient.post("/bookings/group", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bookings"] });
+    },
+  });
+}
+
 export function useUpdateBooking() {
   const qc = useQueryClient();
   return useMutation({
@@ -494,6 +518,7 @@ export function useCheckIn() {
       id,
       roomId,
       depositPaid,
+      paymentMethod,
       idType,
       idNumber,
       idDocument,
@@ -501,6 +526,7 @@ export function useCheckIn() {
       id: string;
       roomId: string;
       depositPaid?: number;
+      paymentMethod?: string;
       idType?: string;
       idNumber?: string;
       idDocument?: string;
@@ -509,6 +535,7 @@ export function useCheckIn() {
         .post(`/bookings/${id}/check-in`, {
           roomId,
           depositPaid,
+          paymentMethod,
           idType,
           idNumber,
           idDocument,
@@ -517,6 +544,8 @@ export function useCheckIn() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookings"] });
       qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["bookings", "transactions"] });
     },
   });
 }
@@ -741,6 +770,22 @@ export function useCreatePayment() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["payments"] });
     },
+  });
+}
+
+/** Room-booking payments: accommodation payments tied to invoices with a bookingId */
+export function useBookingTransactions(params?: Record<string, string>) {
+  const query = params ? new URLSearchParams(params).toString() : "";
+  return useQuery({
+    queryKey: ["bookings", "transactions", params],
+    queryFn: () =>
+      apiClient
+        .get(
+          query
+            ? `/bookings/transactions?${query}`
+            : "/bookings/transactions"
+        )
+        .then((r) => r.data),
   });
 }
 
@@ -1565,6 +1610,90 @@ export function useDeleteEventResource() {
   });
 }
 
+// ─── Restaurant Units (chef/store units) ──────────────────────
+export function useRestaurantUnits(params?: ListParams) {
+  return useQuery({
+    queryKey: ["restaurantUnits", params],
+    queryFn: () =>
+      apiClient.get(`/restaurant/units${qs(params)}`).then((r) => r.data),
+  });
+}
+
+export function useCreateRestaurantUnit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      apiClient.post("/restaurant/units", data).then(extractData),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurantUnits"] }),
+  });
+}
+
+export function useUpdateRestaurantUnit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiClient.patch(`/restaurant/units/${id}`, data).then(extractData),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurantUnits"] }),
+  });
+}
+
+export function useDeleteRestaurantUnit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/restaurant/units/${id}`).then(extractData),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurantUnits"] }),
+  });
+}
+
+// ─── Item Yields (e.g. 1 small bag → 20 plates) ──────────────
+export function useItemYields(params?: ListParams) {
+  return useQuery({
+    queryKey: ["itemYields", params],
+    queryFn: () =>
+      apiClient.get(`/restaurant/item-yields${qs(params)}`).then((r) => r.data),
+  });
+}
+
+export function useCreateItemYield() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      apiClient.post("/restaurant/item-yields", data).then(extractData),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["itemYields"] });
+      qc.invalidateQueries({ queryKey: ["inventoryItems"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useUpdateItemYield() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiClient.patch(`/restaurant/item-yields/${id}`, data).then(extractData),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["itemYields"] });
+      qc.invalidateQueries({ queryKey: ["inventoryItems"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useDeleteItemYield() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/restaurant/item-yields/${id}`).then(extractData),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["itemYields"] });
+      qc.invalidateQueries({ queryKey: ["inventoryItems"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
 // =============================================================================
 // RESTAURANT RECIPES
 // =============================================================================
@@ -1879,6 +2008,13 @@ export function useHousekeepingTasks(params?: Record<string, string>) {
   });
 }
 
+export function useHousekeepingStats() {
+  return useQuery({
+    queryKey: ["housekeeping-stats"],
+    queryFn: () => apiClient.get("/housekeeping/stats").then((r) => r.data),
+  });
+}
+
 export function useHousekeepingTask(id: string) {
   return useQuery({
     queryKey: ["housekeeping", id],
@@ -1895,6 +2031,8 @@ export function useCreateHousekeepingTask() {
       apiClient.post("/housekeeping", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["housekeeping"] });
+      qc.invalidateQueries({ queryKey: ["housekeeping-stats"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
     },
   });
 }
@@ -1909,6 +2047,8 @@ export function useUpdateHousekeepingTask() {
       apiClient.patch(`/housekeeping/${id}`, data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["housekeeping"] });
+      qc.invalidateQueries({ queryKey: ["housekeeping-stats"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
     },
   });
 }
@@ -1919,6 +2059,8 @@ export function useDeleteHousekeepingTask() {
     mutationFn: (id: string) => apiClient.delete(`/housekeeping/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["housekeeping"] });
+      qc.invalidateQueries({ queryKey: ["housekeeping-stats"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
     },
   });
 }
@@ -2620,6 +2762,25 @@ export function useDeleteSupplier() {
   });
 }
 
+export function useSupplierInsights(
+  id?: string,
+  params?: Record<string, string>
+) {
+  const query = params ? new URLSearchParams(params).toString() : "";
+  return useQuery({
+    queryKey: ["procurement", "suppliers", "insights", id, params],
+    enabled: Boolean(id),
+    queryFn: () =>
+      apiClient
+        .get(
+          query
+            ? `/procurement/suppliers/${id}/insights?${query}`
+            : `/procurement/suppliers/${id}/insights`
+        )
+        .then((r) => r.data),
+  });
+}
+
 // =============================================================================
 // PROCUREMENT — PURCHASE ORDERS
 // =============================================================================
@@ -2793,6 +2954,155 @@ export function useDeleteStockTransfer() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["procurement", "transfers"] });
+    },
+  });
+}
+
+// =============================================================================
+// RESTAURANT — MOVEMENT FLOW (Main Store → Kitchen → Front House)
+// =============================================================================
+
+export function useStationTransfers(params?: Record<string, string>) {
+  const query = params ? new URLSearchParams(params).toString() : "";
+  return useQuery({
+    queryKey: ["restaurant", "station-transfers", params],
+    queryFn: () =>
+      apiClient
+        .get(
+          query
+            ? `/restaurant/station-transfers?${query}`
+            : "/restaurant/station-transfers"
+        )
+        .then((r) => r.data),
+  });
+}
+
+export function useCreateStationTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      department,
+      ...data
+    }: Record<string, unknown> & { department?: string }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .post(`/restaurant/station-transfers${query}`, data)
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "station-transfers"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useUpdateStationTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      department,
+      ...data
+    }: { id: string; department?: string } & Record<string, unknown>) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .patch(`/restaurant/station-transfers/${id}${query}`, data)
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "station-transfers"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useDeleteStationTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, department }: { id: string; department?: string }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient.delete(`/restaurant/station-transfers/${id}${query}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "station-transfers"] });
+    },
+  });
+}
+
+export function useLocationStock(params?: Record<string, string>) {
+  const query = params ? new URLSearchParams(params).toString() : "";
+  return useQuery({
+    queryKey: ["restaurant", "location-stock", params],
+    queryFn: () =>
+      apiClient
+        .get(
+          query
+            ? `/restaurant/location-stock?${query}`
+            : "/restaurant/location-stock"
+        )
+        .then((r) => r.data),
+  });
+}
+
+export function useMovementLedger(params?: Record<string, string>) {
+  const query = params ? new URLSearchParams(params).toString() : "";
+  return useQuery({
+    queryKey: ["restaurant", "movement-ledger", params],
+    queryFn: () =>
+      apiClient
+        .get(
+          query
+            ? `/restaurant/movement-ledger?${query}`
+            : "/restaurant/movement-ledger"
+        )
+        .then((r) => r.data),
+  });
+}
+
+export function useKitchenUsage(params?: Record<string, string>) {
+  const query = params ? new URLSearchParams(params).toString() : "";
+  return useQuery({
+    queryKey: ["restaurant", "kitchen-usage", params],
+    queryFn: () =>
+      apiClient
+        .get(
+          query
+            ? `/restaurant/kitchen-usage?${query}`
+            : "/restaurant/kitchen-usage"
+        )
+        .then((r) => r.data),
+  });
+}
+
+export function useCreateKitchenUsage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      department,
+      ...data
+    }: Record<string, unknown> & { department?: string }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .post(`/restaurant/kitchen-usage${query}`, data)
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
     },
   });
 }

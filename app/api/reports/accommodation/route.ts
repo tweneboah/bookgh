@@ -121,7 +121,7 @@ export const GET = withHandler(
       },
       {
         $lookup: {
-          from: "rooms",
+          from: "rooms_accommodation",
           localField: "_id",
           foreignField: "_id",
           as: "room",

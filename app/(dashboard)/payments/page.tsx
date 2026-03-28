@@ -29,7 +29,7 @@ import { format } from "date-fns";
 import { PAYMENT_METHOD, PAYMENT_STATUS, DEPARTMENT } from "@/constants";
 
 const fmt = (n: number) =>
-  new Intl.NumberFormat("en-GH", { style: "currency", currency: "GHS" }).format(n);
+  `₵${Number(n).toLocaleString("en-GH", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
 const METHOD_OPTIONS = Object.entries(PAYMENT_METHOD).map(([k, v]) => ({
   value: v,

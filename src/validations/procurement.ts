@@ -5,6 +5,7 @@ import {
   PROCUREMENT_ORDER_STATUS,
   TRANSFER_STATUS,
   DEPARTMENT,
+  PAYMENT_METHOD,
 } from "@/constants";
 
 export const supplierSchema = z.object({
@@ -26,6 +27,28 @@ export const supplierSchema = z.object({
   averageFulfillmentDays: z.number().min(0).optional(),
   onTimeRate: z.number().min(0).max(100).optional(),
   rating: z.number().min(0).max(5).optional(),
+  paymentTerms: z.string().max(120).optional(),
+  bankAccount: z
+    .object({
+      bankName: z.string().min(1),
+      accountName: z.string().min(1),
+      accountNumber: z.string().min(1),
+      swiftCode: z.string().optional(),
+      branchName: z.string().optional(),
+    })
+    .optional(),
+  documents: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        name: z.string().optional(),
+        documentType: z.string().optional(),
+        expiryDate: z.string().datetime().optional(),
+      })
+    )
+    .optional(),
+  blacklistedReason: z.string().max(500).optional(),
+  blockedUntil: z.string().datetime().optional(),
   status: z.enum(enumValues(SUPPLIER_STATUS) as [string, ...string[]]).optional(),
   notes: z.string().optional(),
 });
@@ -54,6 +77,13 @@ export const purchaseOrderSchema = z.object({
   subtotal: z.number().min(0).optional(),
   taxAmount: z.number().min(0).optional(),
   totalAmount: z.number().min(0).optional(),
+  negotiatedTotalAmount: z.number().min(0).optional(),
+  paymentMethod: z
+    .enum(enumValues(PAYMENT_METHOD) as [string, ...string[]])
+    .optional(),
+  paymentDueDate: z.string().datetime().optional(),
+  paymentNotes: z.string().max(500).optional(),
+  negotiationNotes: z.string().max(500).optional(),
   status: z
     .enum(enumValues(PROCUREMENT_ORDER_STATUS) as [string, ...string[]])
     .optional(),

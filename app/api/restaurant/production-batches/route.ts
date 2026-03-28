@@ -11,8 +11,9 @@ import {
   getInventoryMovementModelForDepartment,
 } from "@/lib/department-inventory";
 import { getProductionBatchModelForDepartment } from "@/lib/department-restaurant";
-import { convertToBaseUnitQuantity } from "@/lib/unit-conversion";
+import { convertToBaseUnitQuantity, buildYieldMap, convertChefQtyToBaseQty } from "@/lib/unit-conversion";
 import { BadRequestError } from "@/lib/errors";
+import ItemYield from "@/models/restaurant/ItemYield";
 
 const SORT_FIELDS = ["productionDate", "batchNumber", "totalInputCost", "createdAt"];
 
@@ -56,6 +57,16 @@ export const POST = withHandler(
     let totalInputCost = 0;
     let outputBaseQty = Number(data.output.quantityProduced ?? 0);
 
+    // Pre-load yield mappings for all input items
+    const inputItemIds = data.inputs.map((i) => i.inventoryItemId);
+    const yieldDocs = inputItemIds.length > 0
+      ? await ItemYield.find({ tenantId, branchId, inventoryItemId: { $in: inputItemIds } } as any)
+          .populate("fromUnitId", "name abbreviation")
+          .populate("toUnitId", "name abbreviation")
+          .lean()
+      : [];
+    const yieldMap = buildYieldMap(yieldDocs as any[]);
+
     for (const input of data.inputs) {
       const item = await InventoryItemModel.findOne({
         _id: new mongoose.Types.ObjectId(input.inventoryItemId),
@@ -63,17 +74,32 @@ export const POST = withHandler(
         branchId,
       } as any);
       if (!item) continue;
+
+      let baseQtyUsed: number;
+
       const converted = convertToBaseUnitQuantity({
         item,
         quantity: Number(input.quantityUsed ?? 0),
         enteredUnit: input.unit,
       });
-      if (!converted) {
-        throw new BadRequestError(
-          `Unit '${input.unit}' is not configured for ${item.name}. Base unit is ${item.unit}.`
-        );
+      if (converted) {
+        baseQtyUsed = converted.baseQuantity;
+      } else {
+        const chefConverted = convertChefQtyToBaseQty({
+          inventoryItemId: String(item._id),
+          chefQty: Number(input.quantityUsed ?? 0),
+          chefUnitIdOrName: input.unit,
+          item,
+          yieldMap,
+        });
+        if (chefConverted != null) {
+          baseQtyUsed = chefConverted;
+        } else {
+          throw new BadRequestError(
+            `Unit '${input.unit}' is not configured for ${item.name}. Base unit is ${item.unit}.`
+          );
+        }
       }
-      const baseQtyUsed = converted.baseQuantity;
       const baseUnitCost = Number(item.unitCost ?? 0);
       totalInputCost += Number((baseQtyUsed * baseUnitCost).toFixed(2));
       const previousStock = Number(item.currentStock ?? 0);

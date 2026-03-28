@@ -14,6 +14,8 @@ export interface IHousekeepingTask extends Document {
   tenantId: Schema.Types.ObjectId;
   branchId: Schema.Types.ObjectId;
   roomId: Schema.Types.ObjectId;
+  /** Optional link to the booking that triggered turnover (e.g. checkout). */
+  bookingId?: Schema.Types.ObjectId;
   assignedTo?: Schema.Types.ObjectId;
   taskType: HousekeepingTaskType;
   status: HousekeepingStatus;
@@ -21,6 +23,9 @@ export interface IHousekeepingTask extends Document {
   notes?: string;
   inspectedBy?: Schema.Types.ObjectId;
   inspectionNotes?: string;
+  /** Target time to finish (SLA). */
+  dueAt?: Date;
+  startedAt?: Date;
   completedAt?: Date;
   linenChanged: boolean;
   createdBy?: Schema.Types.ObjectId;
@@ -31,6 +36,7 @@ export interface IHousekeepingTask extends Document {
 const housekeepingTaskSchema = new Schema<IHousekeepingTask>(
   {
     roomId: { type: Schema.Types.ObjectId, ref: "Room", required: true },
+    bookingId: { type: Schema.Types.ObjectId, ref: "Booking" },
     assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
     taskType: {
       type: String,
@@ -50,6 +56,8 @@ const housekeepingTaskSchema = new Schema<IHousekeepingTask>(
     notes: { type: String },
     inspectedBy: { type: Schema.Types.ObjectId, ref: "User" },
     inspectionNotes: { type: String },
+    dueAt: { type: Date },
+    startedAt: { type: Date },
     completedAt: { type: Date },
     linenChanged: { type: Boolean, default: false },
   },
@@ -63,6 +71,18 @@ housekeepingTaskSchema.plugin(createdByPlugin);
 housekeepingTaskSchema.index({ tenantId: 1, branchId: 1 });
 housekeepingTaskSchema.index({ tenantId: 1, branchId: 1, status: 1 });
 housekeepingTaskSchema.index({ tenantId: 1, branchId: 1, roomId: 1 });
+housekeepingTaskSchema.index({ tenantId: 1, branchId: 1, bookingId: 1 });
+housekeepingTaskSchema.index({ tenantId: 1, branchId: 1, dueAt: 1 });
+
+/** Drop cached model when schema is stale (e.g. HMR added `bookingId`) — avoids StrictPopulateError on populate. */
+if (mongoose.models.HousekeepingTask) {
+  const stale =
+    process.env.NODE_ENV !== "production" ||
+    !mongoose.models.HousekeepingTask.schema.path("bookingId");
+  if (stale) {
+    delete mongoose.models.HousekeepingTask;
+  }
+}
 
 const HousekeepingTask: Model<IHousekeepingTask> =
   mongoose.models.HousekeepingTask ||

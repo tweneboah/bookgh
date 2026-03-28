@@ -80,7 +80,8 @@ export default function PlatformTenantsPage() {
   const createMut = useCreateTenant();
   const updateMut = useUpdateTenant();
 
-  const items = (data?.data ?? data) as TenantRow[];
+  const rawList = data?.data ?? data;
+  const items: TenantRow[] = Array.isArray(rawList) ? rawList : [];
   const pagination = (data?.meta as { pagination?: { page: number; limit: number; total: number } })?.pagination;
 
   const [createForm, setCreateForm] = useState({

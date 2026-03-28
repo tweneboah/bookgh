@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { AppReactSelect } from "@/components/ui/react-select";
 import { ImageUpload, type UploadedImage } from "@/components/ui/image-upload";
+import { StockImagePicker } from "@/components/ui/stock-image-picker";
 import { FiPlus, FiEdit2, FiTrash2, FiGrid } from "react-icons/fi";
 import toast from "react-hot-toast";
 import { useSearchParams } from "next/navigation";
@@ -41,6 +42,7 @@ export default function MenuItemsPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [editItem, setEditItem] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
+  const [showStockPicker, setShowStockPicker] = useState(false);
   const [showDelete, setShowDelete] = useState<string | null>(null);
 
   const [form, setForm] = useState({
@@ -334,6 +336,18 @@ export default function MenuItemsPage() {
                 placeholder="0.00"
               />
             </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-slate-500">
+                Upload an image, or pick a free stock photo (Pixabay).
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowStockPicker(true)}
+              >
+                Pick from stock photos
+              </Button>
+            </div>
             <ImageUpload
               label="Image"
               value={form.image}
@@ -385,6 +399,18 @@ export default function MenuItemsPage() {
             </div>
           </form>
         </Modal>
+
+        <StockImagePicker
+          open={showStockPicker}
+          onClose={() => setShowStockPicker(false)}
+          initialQuery={form.name}
+          onPick={(img) =>
+            setForm((f) => ({
+              ...f,
+              image: [{ url: img.url, caption: img.caption }],
+            }))
+          }
+        />
 
         <Modal open={!!showDelete} onClose={() => setShowDelete(null)} title="Delete Menu Item">
           <p className="text-slate-600">

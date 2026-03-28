@@ -5,6 +5,7 @@ import { parsePagination, parseSortString, paginate } from "@/lib/pagination";
 import { ConflictError, BadRequestError } from "@/lib/errors";
 import Room from "@/models/room/Room";
 import Floor from "@/models/room/Floor";
+import "@/models/room/RoomCategory";
 import { createRoomSchema } from "@/validations/room";
 
 const SORT_FIELDS = ["roomNumber", "floor", "status", "createdAt"];
