@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   useRestaurantUnits,
   useCreateRestaurantUnit,
@@ -30,6 +31,7 @@ import {
 } from "react-icons/fi";
 import { Tags } from "lucide-react";
 import toast from "react-hot-toast";
+import Link from "next/link";
 
 const UNIT_TYPE_OPTIONS = [
   { value: "purchase", label: "Purchase (store)" },
@@ -44,7 +46,14 @@ const TYPE_BADGE: Record<string, "info" | "success" | "warning"> = {
 };
 
 export default function RestaurantUnitsPage() {
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<"units" | "yields">("units");
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "yields") setActiveTab("yields");
+    if (tab === "units") setActiveTab("units");
+  }, [searchParams]);
   const [showUnitModal, setShowUnitModal] = useState(false);
   const [showYieldModal, setShowYieldModal] = useState(false);
   const [editUnit, setEditUnit] = useState<any>(null);
@@ -236,7 +245,7 @@ export default function RestaurantUnitsPage() {
   const handleDeleteUnit = async () => {
     if (!deleteUnit) return;
     try {
-      await removeUnit.mutateAsync(deleteUnit);
+      await removeUnit.mutateAsync({ id: deleteUnit, department: "restaurant" });
       toast.success("Unit deleted");
       setDeleteUnit(null);
     } catch (err: any) {
@@ -249,7 +258,7 @@ export default function RestaurantUnitsPage() {
   const handleDeleteYield = async () => {
     if (!deleteYield) return;
     try {
-      await removeYield.mutateAsync(deleteYield);
+      await removeYield.mutateAsync({ id: deleteYield, department: "restaurant" });
       toast.success("Yield mapping deleted");
       setDeleteYield(null);
     } catch (err: any) {
@@ -566,6 +575,16 @@ export default function RestaurantUnitsPage() {
 
           {activeTab === "yields" && (
             <>
+              <div className="px-4 sm:px-5 pt-4 pb-2 text-sm text-slate-600 border-b border-slate-100 bg-[#fffbf5]">
+                Create the inventory item first in{" "}
+                <Link
+                  href="/pos/inventory?department=restaurant"
+                  className="font-medium text-[#ff6d00] hover:underline"
+                >
+                  Restaurant inventory
+                </Link>
+                , then add yield mappings here (or use optional chef fields on the item form).
+              </div>
               <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/50">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">

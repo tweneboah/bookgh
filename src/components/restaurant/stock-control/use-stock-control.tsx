@@ -12,7 +12,10 @@ import {
   usePurchaseOrders,
   useReceivePurchaseOrder,
   useRestaurantInventoryMovements,
+  useRestaurantUnits,
 } from "@/hooks/api";
+import { convertBaseQtyToChefYieldQty } from "@/lib/unit-conversion";
+import { formatDisplayQuantity } from "@/lib/format-display-qty";
 
 export type CountLine = {
   inventoryItemId: string;
@@ -69,7 +72,8 @@ export function useRestaurantStockControl() {
   }, [page, movementTypeFilter, inventoryFilter, startDate, endDate]);
 
   const { data: inventoryData } = useInventoryItems({ limit: "500", department: "restaurant" });
-  const { data: yieldsData } = useItemYields({ limit: "500" });
+  const { data: yieldsData } = useItemYields({ limit: "1000" });
+  const { data: restaurantUnitsData } = useRestaurantUnits({ limit: "200", active: "true" });
   const { data: movementData, isLoading: movementLoading } =
     useRestaurantInventoryMovements(movementParams);
   const { data: poData, isLoading: poLoading } = usePurchaseOrders({
@@ -94,6 +98,65 @@ export function useRestaurantStockControl() {
   const purchaseOrders = poData?.data ?? [];
   const receiptRows = receiptData?.data ?? [];
   const yieldMappings = yieldsData?.data ?? [];
+  const restaurantUnits = restaurantUnitsData?.data ?? [];
+
+  /** Same yield math as POS inventory (ItemYield + `convertBaseQtyToChefYieldQty`). */
+  const stockCountYieldFormatters = useMemo(() => {
+    const resolveUnitName = (unitRef: any, unitId?: string) => {
+      if (unitRef && typeof unitRef === "object" && (unitRef.name || unitRef.abbreviation)) {
+        return unitRef.abbreviation || unitRef.name;
+      }
+      const id = unitId ?? (typeof unitRef === "string" ? unitRef : String(unitRef ?? ""));
+      if (!id) return "?";
+      const found = restaurantUnits.find((u: any) => String(u._id) === id);
+      return found?.abbreviation || found?.name || "?";
+    };
+
+    const yieldFromUnitNameForConversion = (y: any) => {
+      if (typeof y.fromUnitId === "object" && y.fromUnitId?.name) return String(y.fromUnitId.name);
+      const id = typeof y.fromUnitId === "object" ? y.fromUnitId?._id : y.fromUnitId;
+      const found = restaurantUnits.find((u: any) => String(u._id) === String(id ?? ""));
+      if (found?.name) return String(found.name);
+      return resolveUnitName(y.fromUnitId);
+    };
+
+    const getChefEquivalentsForBaseQuantity = (row: any, baseQuantity: number) => {
+      const itemId = String(row._id);
+      const base = Number(baseQuantity);
+      if (!Number.isFinite(base)) return [] as { label: string; qty: number }[];
+      const yRows = yieldMappings.filter(
+        (y: any) => String(y.inventoryItemId?._id ?? y.inventoryItemId) === itemId
+      );
+      const out: { label: string; qty: number }[] = [];
+      for (const y of yRows) {
+        const toLabel = resolveUnitName(y.toUnitId);
+        const chefQty = convertBaseQtyToChefYieldQty({
+          baseQuantity: base,
+          item: row,
+          yieldRow: {
+            fromQty: Number(y.fromQty || 1),
+            toQty: Number(y.toQty || 1),
+            baseUnitQty: y.baseUnitQty != null ? Number(y.baseUnitQty) : undefined,
+            fromUnitName: yieldFromUnitNameForConversion(y),
+          },
+        });
+        if (chefQty != null && Number.isFinite(chefQty)) {
+          out.push({ label: toLabel, qty: chefQty });
+        }
+      }
+      return out;
+    };
+
+    const formatYieldEquivLine = (row: any, baseQty: number): string | null => {
+      const eqs = getChefEquivalentsForBaseQuantity(row, baseQty);
+      if (!eqs.length) return null;
+      return eqs
+        .map((e) => `≈ ${formatDisplayQuantity(e.qty, 1)} ${e.label}`)
+        .join(" · ");
+    };
+
+    return { formatYieldEquivLine };
+  }, [yieldMappings, restaurantUnits]);
 
   const inventoryMap = useMemo(
     () => Object.fromEntries(inventoryItems.map((item: any) => [String(item._id), item])),
@@ -103,8 +166,12 @@ export function useRestaurantStockControl() {
   const yieldByItem = useMemo(() => {
     const m = new Map<string, any[]>();
     for (const y of yieldMappings) {
-      const itemId =
-        typeof y.inventoryItemId === "object" ? y.inventoryItemId._id : y.inventoryItemId;
+      const itemId = String(
+        typeof y.inventoryItemId === "object" && y.inventoryItemId?._id
+          ? y.inventoryItemId._id
+          : y.inventoryItemId ?? ""
+      );
+      if (!itemId) continue;
       if (!m.has(itemId)) m.set(itemId, []);
       m.get(itemId)!.push(y);
     }
@@ -270,11 +337,12 @@ export function useRestaurantStockControl() {
   }, [countLines]);
 
   const stockCountPreview = useMemo(() => {
+    const { formatYieldEquivLine } = stockCountYieldFormatters;
     return countLines
       .filter((line) => line.inventoryItemId && line.physicalStock !== "")
       .map((line) => {
         const item = inventoryMap[line.inventoryItemId] as
-          | { name?: string; unit?: string; currentStock?: number }
+          | { name?: string; unit?: string; currentStock?: number; _id?: string }
           | undefined;
         const systemStock = Number(item?.currentStock ?? 0);
         const physicalStock = Number(line.physicalStock);
@@ -287,9 +355,13 @@ export function useRestaurantStockControl() {
           physicalStock,
           variance,
           note: line.note || "",
+          systemYieldEquiv: item ? formatYieldEquivLine(item, systemStock) : null,
+          physicalYieldEquiv: item ? formatYieldEquivLine(item, physicalStock) : null,
+          varianceYieldEquiv:
+            item && variance !== 0 ? formatYieldEquivLine(item, variance) : null,
         };
       });
-  }, [countLines, inventoryMap]);
+  }, [countLines, inventoryMap, stockCountYieldFormatters]);
 
   const stockCountPreviewSorted = useMemo(() => {
     if (!countSortByVariance) return stockCountPreview;
@@ -433,6 +505,7 @@ export function useRestaurantStockControl() {
     note: string;
     reason: string;
     lines: {
+      inventoryItemId: string;
       itemName: string;
       quantity: number;
       unit: string;
@@ -464,8 +537,10 @@ export function useRestaurantStockControl() {
       }
       const g = byReceipt.get(rn)!;
       g.rawRows.push(row);
+      const invId = String(row.inventoryItemId?._id ?? row.inventoryItemId ?? "");
       g.lines.push({
-        itemName: inventoryMap[String(row.inventoryItemId)]?.name ?? String(row.inventoryItemId),
+        inventoryItemId: invId,
+        itemName: inventoryMap[invId]?.name ?? String(row.inventoryItemId),
         quantity: row.quantity,
         unit: row.unit,
         previousStock: row.previousStock,
@@ -557,6 +632,8 @@ export function useRestaurantStockControl() {
     yieldMappings,
     buildChefReadableEquivalents,
     chefReadableText,
+    /** Same `≈ … Plates` strings as physical count / POS inventory (ItemYield + base qty). */
+    formatYieldEquivLine: stockCountYieldFormatters.formatYieldEquivLine,
 
     // movement entry
     movementForm,

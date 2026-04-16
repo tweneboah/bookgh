@@ -3,17 +3,12 @@ import { successResponse, createdResponse } from "@/lib/api-response";
 import { requireBranch, requireRoles } from "@/lib/auth-context";
 import { parsePagination, parseSortString, paginate } from "@/lib/pagination";
 import { BadRequestError } from "@/lib/errors";
-import { USER_ROLES, STOCK_LOCATION } from "@/constants";
+import { USER_ROLES } from "@/constants";
 import ActivityLog from "@/models/shared/ActivityLog";
 import mongoose from "mongoose";
-import {
-  getKitchenUsageModelForDepartment,
-  getLocationStockModelForDepartment,
-  getStationMovementModelForDepartment,
-  normalizeMovementDepartment,
-} from "@/lib/department-movement";
-import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
+import { getKitchenUsageModelForDepartment, normalizeMovementDepartment } from "@/lib/department-movement";
 import { createKitchenUsageSchema } from "@/validations/restaurant";
+import { applyKitchenUsageStockEffects } from "@/lib/kitchen-usage-stock";
 
 const SORT_FIELDS = ["usageDate", "createdAt"];
 
@@ -58,9 +53,6 @@ export const POST = withHandler(
       "restaurant"
     );
     const KitchenUsageModel = getKitchenUsageModelForDepartment(department);
-    const LocationStockModel = getLocationStockModelForDepartment(department);
-    const InventoryItemModel = getInventoryItemModelForDepartment(department);
-    const StationMovementModel = getStationMovementModelForDepartment(department);
 
     const body = await req.json();
     const data = createKitchenUsageSchema.parse(body);
@@ -94,103 +86,13 @@ export const POST = withHandler(
       createdBy: auth.userId,
     } as any);
 
-    // Apply stock movements: deduct from Kitchen (used+leftover), add used to Front House, add leftover to Main Store
-    for (const line of doc.lines ?? []) {
-      const invId = line.inventoryItemId;
-      const usedQty = Number(line.usedQty ?? 0);
-      const leftoverQty = Number(line.leftoverQty ?? 0);
-      const unit = String(line.unit ?? "unit").trim();
-      const itemName = String(line.itemName ?? "").trim();
-      const totalDeduct = usedQty + leftoverQty;
-      if (totalDeduct <= 0) continue;
-
-      // Deduct from Kitchen
-      const locStock = await LocationStockModel.findOne({
-        inventoryItemId: invId,
-        location: STOCK_LOCATION.KITCHEN,
-        tenantId,
-        branchId,
-        department,
-      } as any);
-      const kitchenPrev = locStock ? Number(locStock.quantity ?? 0) : 0;
-      if (kitchenPrev < totalDeduct) {
-        throw new BadRequestError(
-          `Insufficient kitchen stock for ${itemName}. Available: ${kitchenPrev}, needed: ${totalDeduct}`
-        );
-      }
-      if (locStock) {
-        locStock.quantity = Math.max(0, kitchenPrev - totalDeduct);
-        await locStock.save();
-      }
-
-      // Add used to Front House
-      if (usedQty > 0) {
-        let fh = await LocationStockModel.findOne({
-          inventoryItemId: invId,
-          location: STOCK_LOCATION.FRONT_HOUSE,
-          tenantId,
-          branchId,
-          department,
-        } as any);
-        if (!fh) {
-          fh = await LocationStockModel.create({
-            tenantId,
-            branchId,
-            department,
-            inventoryItemId: invId,
-            location: STOCK_LOCATION.FRONT_HOUSE,
-            quantity: usedQty,
-            unit,
-          } as any);
-        } else {
-          fh.quantity = Number(fh.quantity ?? 0) + usedQty;
-          await fh.save();
-        }
-        await StationMovementModel.create({
-          tenantId,
-          branchId,
-          department,
-          kitchenUsageId: doc._id,
-          inventoryItemId: invId,
-          itemName,
-          fromLocation: STOCK_LOCATION.KITCHEN,
-          toLocation: STOCK_LOCATION.FRONT_HOUSE,
-          quantity: usedQty,
-          unit,
-          usedQty,
-          reason: `Kitchen usage: used in prep`,
-          createdBy: auth.userId,
-        } as any);
-      }
-
-      // Add leftover to Main Store
-      if (leftoverQty > 0) {
-        const item = await InventoryItemModel.findOne({
-          _id: invId,
-          tenantId,
-          branchId,
-        } as any);
-        if (item) {
-          item.currentStock = Number(item.currentStock ?? 0) + leftoverQty;
-          await item.save();
-        }
-        await StationMovementModel.create({
-          tenantId,
-          branchId,
-          department,
-          kitchenUsageId: doc._id,
-          inventoryItemId: invId,
-          itemName,
-          fromLocation: STOCK_LOCATION.KITCHEN,
-          toLocation: STOCK_LOCATION.MAIN_STORE,
-          quantity: leftoverQty,
-          unit,
-          leftoverQty,
-          reason: `Kitchen usage: leftover returned`,
-          createdBy: auth.userId,
-        } as any);
-      }
-    }
+    await applyKitchenUsageStockEffects({
+      doc: doc as { _id: mongoose.Types.ObjectId; lines?: unknown[] },
+      tenantId,
+      branchId,
+      department,
+      userId: auth.userId,
+    });
 
     await ActivityLog.create({
       tenantId,

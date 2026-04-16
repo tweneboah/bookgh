@@ -7,8 +7,14 @@ import { updateRecipeSchema } from "@/validations/restaurant";
 import { writeActivityLog } from "@/lib/activity-log";
 import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
 import { getRecipeModelForDepartment } from "@/lib/department-restaurant";
+import { getKitchenUsageModelForDepartment } from "@/lib/department-movement";
 import { convertToBaseUnitQuantity, buildYieldMap, convertChefQtyToBaseQty } from "@/lib/unit-conversion";
 import ItemYield from "@/models/restaurant/ItemYield";
+import mongoose from "mongoose";
+import {
+  applyKitchenUsageStockEffects,
+  reverseKitchenUsageStockEffects,
+} from "@/lib/kitchen-usage-stock";
 
 const RESTAURANT_ROLES = [
   USER_ROLES.TENANT_ADMIN,
@@ -132,6 +138,26 @@ export const PATCH = withHandler(
         ? Math.round(((grossProfit / sellingPrice) * 100) * 100) / 100
         : 0;
 
+    const usageRef = `AUTO_RECIPE_REF:${String(existing._id)}`;
+    const KitchenUsageModel = getKitchenUsageModelForDepartment("restaurant");
+    const existingUsage = await KitchenUsageModel.findOne({
+      tenantId,
+      branchId,
+      department: "restaurant",
+      notes: { $regex: usageRef },
+    } as any);
+    if (existingUsage) {
+      await reverseKitchenUsageStockEffects({
+        doc: {
+          _id: existingUsage._id as mongoose.Types.ObjectId,
+          lines: existingUsage.lines,
+        },
+        tenantId,
+        branchId,
+        department: "restaurant",
+      });
+    }
+
     const doc = await RecipeModel.findOneAndUpdate(
       { _id: params.id, tenantId, branchId } as any,
       {
@@ -144,6 +170,51 @@ export const PATCH = withHandler(
       { new: true, runValidators: true }
     ).lean();
     if (!doc) throw new NotFoundError("Recipe");
+
+    const syncedUsage = await KitchenUsageModel.findOneAndUpdate(
+      {
+        tenantId,
+        branchId,
+        department: "restaurant",
+        notes: { $regex: usageRef },
+      } as any,
+      {
+        $set: {
+          usageDate: new Date(),
+          lines: ingredients.map((row) => ({
+            inventoryItemId: row.inventoryItemId,
+            itemName: row.name,
+            issuedQty: Number(row.quantity ?? 0),
+            usedQty: Number(row.quantity ?? 0),
+            leftoverQty: 0,
+            unit: row.unit,
+            note: `Auto from recipe ${doc.menuItemName} (${usageRef})`,
+          })),
+          notes: doc.preparationInstructions
+            ? `Auto-generated from recipe (${usageRef}). ${doc.preparationInstructions}`
+            : `Auto-generated from recipe (${usageRef})`,
+          createdBy: auth.userId,
+        },
+        $setOnInsert: {
+          tenantId,
+          branchId,
+          department: "restaurant",
+        },
+      } as any,
+      { upsert: true, returnDocument: "after", runValidators: true }
+    );
+    if (syncedUsage) {
+      await applyKitchenUsageStockEffects({
+        doc: {
+          _id: syncedUsage._id as mongoose.Types.ObjectId,
+          lines: syncedUsage.lines,
+        },
+        tenantId,
+        branchId,
+        department: "restaurant",
+        userId: auth.userId,
+      });
+    }
 
     await writeActivityLog(req, auth, {
       action: "RESTAURANT_RECIPE_UPDATED",
@@ -161,12 +232,38 @@ export const DELETE = withHandler(
     requireRoles(auth, [...RESTAURANT_ROLES]);
     const { tenantId, branchId } = requireBranch(auth);
     const RecipeModel = getRecipeModelForDepartment("restaurant");
-    const doc = await RecipeModel.findOneAndDelete({
+    const doc = await RecipeModel.findOne({
       _id: params.id,
       tenantId,
       branchId,
-    } as any);
+    } as any).lean();
     if (!doc) throw new NotFoundError("Recipe");
+
+    const usageRef = `AUTO_RECIPE_REF:${String(doc._id)}`;
+    const KitchenUsageModel = getKitchenUsageModelForDepartment("restaurant");
+    const autoUsages = await KitchenUsageModel.find({
+      tenantId,
+      branchId,
+      department: "restaurant",
+      notes: { $regex: usageRef },
+    } as any);
+    for (const usage of autoUsages) {
+      await reverseKitchenUsageStockEffects({
+        doc: { _id: usage._id as mongoose.Types.ObjectId, lines: usage.lines },
+        tenantId,
+        branchId,
+        department: "restaurant",
+      });
+    }
+    await KitchenUsageModel.deleteMany({
+      tenantId,
+      branchId,
+      department: "restaurant",
+      notes: { $regex: usageRef },
+    } as any);
+
+    await RecipeModel.deleteOne({ _id: params.id, tenantId, branchId } as any);
+
     await writeActivityLog(req, auth, {
       action: "RESTAURANT_RECIPE_DELETED",
       resource: "recipe",

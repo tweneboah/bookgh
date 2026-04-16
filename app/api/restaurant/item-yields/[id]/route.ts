@@ -5,7 +5,11 @@ import { updateItemYieldSchema } from "@/validations/restaurant";
 import { NotFoundError } from "@/lib/errors";
 import ItemYield from "@/models/restaurant/ItemYield";
 import "@/models/restaurant/RestaurantUnit";
-import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
+import {
+  getInventoryItemModelForDepartment,
+  normalizeInventoryDepartment,
+} from "@/lib/department-inventory";
+import { DEPARTMENT } from "@/constants";
 
 export const PATCH = withHandler(
   async (req, { auth, params }) => {
@@ -14,8 +18,17 @@ export const PATCH = withHandler(
     const body = await req.json();
     console.log("[ITEM-YIELDS][PATCH] id:", id, "body:", body);
     const data = updateItemYieldSchema.parse(body);
+    const requestedDepartment = normalizeInventoryDepartment(
+      (data as any).department ?? req.nextUrl.searchParams.get("department"),
+      DEPARTMENT.RESTAURANT
+    );
 
-    const existing = await ItemYield.findOne({ _id: id, tenantId, branchId }).lean();
+    const existing = await ItemYield.findOne({
+      _id: id,
+      tenantId,
+      branchId,
+      department: requestedDepartment,
+    }).lean();
     if (!existing) throw new NotFoundError("Item yield mapping");
 
     const mergedFromQty = data.fromQty ?? Number((existing as any).fromQty ?? 0);
@@ -29,9 +42,10 @@ export const PATCH = withHandler(
     if (data.effectiveFrom) update.effectiveFrom = new Date(data.effectiveFrom);
     if (data.effectiveTo) update.effectiveTo = new Date(data.effectiveTo);
 
-    const RestaurantInventory = getInventoryItemModelForDepartment("restaurant");
+    const scopedDepartment = String((existing as any).department ?? DEPARTMENT.RESTAURANT);
+    const DepartmentInventory = getInventoryItemModelForDepartment(scopedDepartment);
     const doc = await ItemYield.findOneAndUpdate(
-      { _id: id, tenantId, branchId },
+      { _id: id, tenantId, branchId, department: scopedDepartment },
       { $set: update },
       { new: true, runValidators: true }
     )
@@ -40,7 +54,7 @@ export const PATCH = withHandler(
       .populate({
         path: "inventoryItemId",
         select: "name unit category",
-        model: RestaurantInventory,
+        model: DepartmentInventory,
       });
 
     if (!doc) throw new NotFoundError("Item yield mapping");
@@ -54,7 +68,7 @@ export const PATCH = withHandler(
     // Keep inventory unitConversions in sync for durable future chef-unit conversions.
     if (mergedFromQty > 0 && mergedBaseUnitQty > 0) {
       const [inventoryItem, fromUnitDoc] = await Promise.all([
-        RestaurantInventory.findOne({
+        DepartmentInventory.findOne({
           _id: mergedInventoryItemId,
           tenantId,
           branchId,
@@ -95,11 +109,16 @@ export const DELETE = withHandler(
   async (req, { auth, params }) => {
     const { tenantId, branchId } = requireBranch(auth);
     const { id } = params;
+    const department = normalizeInventoryDepartment(
+      req.nextUrl.searchParams.get("department"),
+      DEPARTMENT.RESTAURANT
+    );
 
     const doc = await ItemYield.findOneAndDelete({
       _id: id,
       tenantId,
       branchId,
+      department,
     });
     if (!doc) throw new NotFoundError("Item yield mapping");
 

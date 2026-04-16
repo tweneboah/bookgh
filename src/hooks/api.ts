@@ -289,7 +289,10 @@ export function useDeleteRoom() {
 // PRICING RULES
 // =============================================================================
 
-export function usePricingRules(params?: Record<string, string>) {
+export function usePricingRules(
+  params?: Record<string, string>,
+  queryOptions?: { enabled?: boolean }
+) {
   const query = params ? new URLSearchParams(params).toString() : "";
   return useQuery({
     queryKey: ["pricing-rules", params],
@@ -297,6 +300,7 @@ export function usePricingRules(params?: Record<string, string>) {
       apiClient
         .get(query ? `/pricing-rules?${query}` : "/pricing-rules")
         .then((r) => r.data),
+    enabled: queryOptions?.enabled ?? true,
   });
 }
 
@@ -1631,8 +1635,15 @@ export function useCreateRestaurantUnit() {
 export function useUpdateRestaurantUnit() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
-      apiClient.patch(`/restaurant/units/${id}`, data).then(extractData),
+    mutationFn: ({ id, department, ...data }: { id: string; department?: string } & Record<string, unknown>) =>
+      apiClient
+        .patch(
+          department
+            ? `/restaurant/units/${id}?department=${encodeURIComponent(department)}`
+            : `/restaurant/units/${id}`,
+          data
+        )
+        .then(extractData),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurantUnits"] }),
   });
 }
@@ -1640,8 +1651,14 @@ export function useUpdateRestaurantUnit() {
 export function useDeleteRestaurantUnit() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete(`/restaurant/units/${id}`).then(extractData),
+    mutationFn: ({ id, department }: { id: string; department?: string }) =>
+      apiClient
+        .delete(
+          department
+            ? `/restaurant/units/${id}?department=${encodeURIComponent(department)}`
+            : `/restaurant/units/${id}`
+        )
+        .then(extractData),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurantUnits"] }),
   });
 }
@@ -1671,8 +1688,15 @@ export function useCreateItemYield() {
 export function useUpdateItemYield() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
-      apiClient.patch(`/restaurant/item-yields/${id}`, data).then(extractData),
+    mutationFn: ({ id, department, ...data }: { id: string; department?: string } & Record<string, unknown>) =>
+      apiClient
+        .patch(
+          department
+            ? `/restaurant/item-yields/${id}?department=${encodeURIComponent(department)}`
+            : `/restaurant/item-yields/${id}`,
+          data
+        )
+        .then(extractData),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["itemYields"] });
       qc.invalidateQueries({ queryKey: ["inventoryItems"] });
@@ -1684,8 +1708,14 @@ export function useUpdateItemYield() {
 export function useDeleteItemYield() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete(`/restaurant/item-yields/${id}`).then(extractData),
+    mutationFn: ({ id, department }: { id: string; department?: string }) =>
+      apiClient
+        .delete(
+          department
+            ? `/restaurant/item-yields/${id}?department=${encodeURIComponent(department)}`
+            : `/restaurant/item-yields/${id}`
+        )
+        .then(extractData),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["itemYields"] });
       qc.invalidateQueries({ queryKey: ["inventoryItems"] });
@@ -1716,6 +1746,8 @@ export function useCreateRestaurantRecipe() {
       apiClient.post("/restaurant/recipes", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["restaurant", "recipes"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
     },
   });
 }
@@ -1727,6 +1759,8 @@ export function useUpdateRestaurantRecipe() {
       apiClient.patch(`/restaurant/recipes/${id}`, data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["restaurant", "recipes"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
     },
   });
 }
@@ -1737,6 +1771,8 @@ export function useDeleteRestaurantRecipe() {
     mutationFn: (id: string) => apiClient.delete(`/restaurant/recipes/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["restaurant", "recipes"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
     },
   });
 }
@@ -2431,6 +2467,60 @@ export function useBarOrderPricingPreview(params: {
   });
 }
 
+export function useOrderStockValidation(
+  department: string | undefined,
+  lines: Array<{
+    lineIndex?: number;
+    menuItemId: string;
+    quantity: number;
+    name?: string;
+  }>,
+  enabled: boolean
+) {
+  const normalizedLines = lines
+    .filter((line) => line.menuItemId && Number(line.quantity) > 0)
+    .map((line) => ({
+      lineIndex: line.lineIndex,
+      menuItemId: line.menuItemId,
+      quantity: Number(line.quantity),
+      name: line.name,
+    }));
+
+  return useQuery({
+    queryKey: [
+      "pos",
+      "orders",
+      "stock-validation",
+      department ?? "bar",
+      JSON.stringify(normalizedLines),
+    ],
+    queryFn: () =>
+      apiClient
+        .post("/pos/orders/validate-stock", {
+          department: department ?? "bar",
+          items: normalizedLines,
+        })
+        .then(
+          (r) =>
+            (r.data?.data ?? r.data) as {
+              ok: boolean;
+              message?: string;
+              lineHints?: Array<{
+                lineIndex: number;
+                menuItemId: string;
+                requestedQty: number;
+                maxQty: number | null;
+                limitingItemName: string | null;
+                availableQty: number | null;
+                unit: string | null;
+              }>;
+            }
+        ),
+    enabled: Boolean(enabled && normalizedLines.length > 0),
+    staleTime: 15_000,
+  });
+}
+
 export function useCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
@@ -2445,6 +2535,7 @@ export function useCreateOrder() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["pos", "orders"] });
+      qc.invalidateQueries({ queryKey: ["pos", "orders", "stock-validation"] });
     },
   });
 }
@@ -3035,6 +3126,85 @@ export function useDeleteStationTransfer() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["restaurant", "station-transfers"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useBulkDeleteStationTransfers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      department,
+    }: {
+      ids: string[];
+      department?: string;
+    }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .post(`/restaurant/station-transfers/bulk-delete${query}`, { ids })
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "station-transfers"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useBulkDeleteMovementLedger() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      department,
+    }: {
+      ids: string[];
+      department?: string;
+    }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .post(`/restaurant/movement-ledger/bulk-delete${query}`, { ids })
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useBulkDeleteLocationStock() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      department,
+    }: {
+      ids: string[];
+      department?: string;
+    }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .post(`/restaurant/location-stock/bulk-delete${query}`, { ids })
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
     },
   });
 }
@@ -3102,6 +3272,122 @@ export function useCreateKitchenUsage() {
       qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
       qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
       qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useUpdateKitchenUsage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      department,
+      ...data
+    }: { id: string; department?: string } & Record<string, unknown>) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .patch(`/restaurant/kitchen-usage/${id}${query}`, data)
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useDeleteKitchenUsage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, department }: { id: string; department?: string }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient.delete(`/restaurant/kitchen-usage/${id}${query}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "kitchen-usage"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useUpdateStationMovement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      department,
+      ...data
+    }: { id: string; department?: string } & Record<string, unknown>) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .patch(`/restaurant/movement-ledger/${id}${query}`, data)
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+    },
+  });
+}
+
+export function useDeleteStationMovement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, department }: { id: string; department?: string }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient.delete(`/restaurant/movement-ledger/${id}${query}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "movement-ledger"] });
+    },
+  });
+}
+
+export function useUpdateLocationStock() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      department,
+      ...data
+    }: { id: string; department?: string } & Record<string, unknown>) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient
+        .patch(`/restaurant/location-stock/${id}${query}`, data)
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
+      qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
+    },
+  });
+}
+
+export function useDeleteLocationStock() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, department }: { id: string; department?: string }) => {
+      const query = department
+        ? `?${new URLSearchParams({ department }).toString()}`
+        : "";
+      return apiClient.delete(`/restaurant/location-stock/${id}${query}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["restaurant", "location-stock"] });
       qc.invalidateQueries({ queryKey: ["pos", "inventory"] });
     },
   });

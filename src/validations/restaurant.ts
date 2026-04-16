@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  DEPARTMENT,
   enumValues,
   INVENTORY_MOVEMENT_TYPE,
   STOCK_LOCATION,
@@ -83,6 +84,7 @@ export const createRestaurantUnitSchema = z.object({
   name: z.string().min(1).max(100).trim(),
   type: z.enum(["purchase", "yield", "both"]).default("both"),
   abbreviation: z.string().max(20).trim().optional(),
+  department: z.enum(enumValues(DEPARTMENT) as [string, ...string[]]).optional(),
 });
 
 export const updateRestaurantUnitSchema = createRestaurantUnitSchema.partial().extend({
@@ -97,6 +99,7 @@ export const createItemYieldSchema = z.object({
   baseUnitQty: z.number().positive(),
   toUnitId: z.string().min(1),
   toQty: z.number().positive(),
+  department: z.enum(enumValues(DEPARTMENT) as [string, ...string[]]).optional(),
   notes: z.string().max(500).trim().optional(),
   effectiveFrom: z.string().datetime().optional(),
   effectiveTo: z.string().datetime().optional(),
@@ -149,4 +152,28 @@ export const createKitchenUsageSchema = z.object({
   usageDate: z.string().datetime(),
   lines: z.array(kitchenUsageLineSchema).min(1),
   notes: z.string().max(500).optional(),
+});
+
+export const updateKitchenUsageSchema = createKitchenUsageSchema;
+
+export const updateStationMovementSchema = z
+  .object({
+    itemName: z.string().max(200).optional(),
+    reason: z.string().max(500).optional(),
+  })
+  .refine(
+    (d) =>
+      (d.itemName != null && d.itemName.trim().length > 0) ||
+      (d.reason != null && d.reason.trim().length > 0),
+    { message: "Provide at least one non-empty itemName or reason" }
+  );
+
+export const updateLocationStockSchema = z.object({
+  quantity: z.number().min(0),
+  unit: z.string().min(1).max(32).optional(),
+});
+
+/** Bulk delete for movement-flow (transfers, ledger rows, location stock rows) */
+export const bulkDeleteByIdsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(500),
 });

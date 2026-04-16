@@ -6,6 +6,8 @@ import { createItemYieldSchema } from "@/validations/restaurant";
 import ItemYield from "@/models/restaurant/ItemYield";
 import "@/models/restaurant/RestaurantUnit";
 import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
+import { normalizeInventoryDepartment } from "@/lib/department-inventory";
+import { DEPARTMENT } from "@/constants";
 
 const SORT_FIELDS = ["createdAt", "fromQty", "toQty"];
 
@@ -14,10 +16,14 @@ export const GET = withHandler(
     const { tenantId, branchId } = requireBranch(auth);
     const { page, limit, sort } = parsePagination(req.nextUrl.searchParams);
     const inventoryItemId = req.nextUrl.searchParams.get("inventoryItemId");
+    const department = normalizeInventoryDepartment(
+      req.nextUrl.searchParams.get("department"),
+      DEPARTMENT.RESTAURANT
+    );
 
-    getInventoryItemModelForDepartment("restaurant");
+    getInventoryItemModelForDepartment(department);
 
-    const filter: Record<string, unknown> = { tenantId, branchId };
+    const filter: Record<string, unknown> = { tenantId, branchId, department };
     if (inventoryItemId) filter.inventoryItemId = inventoryItemId;
 
     const sortObj = parseSortString(sort, SORT_FIELDS);
@@ -27,7 +33,7 @@ export const GET = withHandler(
       .populate({
         path: "inventoryItemId",
         select: "name unit category",
-        model: getInventoryItemModelForDepartment("restaurant"),
+        model: getInventoryItemModelForDepartment(department),
       })
       .sort(sortObj);
     const countQuery = ItemYield.countDocuments(filter);
@@ -58,11 +64,15 @@ export const POST = withHandler(
     const body = await req.json();
     console.log("[ITEM-YIELDS][POST] body:", body);
     const data = createItemYieldSchema.parse(body);
-    const RestaurantInventory = getInventoryItemModelForDepartment("restaurant");
+    const department = normalizeInventoryDepartment(
+      (data as any).department,
+      DEPARTMENT.RESTAURANT
+    );
+    const DepartmentInventory = getInventoryItemModelForDepartment(department);
 
     // Keep inventory unitConversions in sync so future chef units always have a base-unit path.
     const [inventoryItem, fromUnitDoc] = await Promise.all([
-      RestaurantInventory.findOne({ _id: data.inventoryItemId, tenantId, branchId } as any),
+      DepartmentInventory.findOne({ _id: data.inventoryItemId, tenantId, branchId } as any),
       (await import("@/models/restaurant/RestaurantUnit")).default.findById(data.fromUnitId).lean(),
     ]);
 
@@ -94,6 +104,7 @@ export const POST = withHandler(
         ? new Date(data.effectiveFrom)
         : undefined,
       effectiveTo: data.effectiveTo ? new Date(data.effectiveTo) : undefined,
+      department,
       tenantId,
       branchId,
       createdBy: auth.userId,
@@ -105,7 +116,7 @@ export const POST = withHandler(
       .populate({
         path: "inventoryItemId",
         select: "name unit category",
-        model: getInventoryItemModelForDepartment("restaurant"),
+        model: getInventoryItemModelForDepartment(department),
       });
 
     console.log("[ITEM-YIELDS][POST] saved:", {

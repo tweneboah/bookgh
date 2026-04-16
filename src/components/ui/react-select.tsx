@@ -16,7 +16,7 @@ interface AppReactSelectProps {
   className?: string;
   error?: string;
   /** Warm pricing-rules modal styling */
-  visualVariant?: "default" | "solar";
+  visualVariant?: "default" | "solar" | "m3";
 }
 
 /* Brand: purple #5a189a, #7b2cbf — dropdown above all content */
@@ -74,6 +74,36 @@ function getSolarSelectStyles(hasError: boolean): StylesConfig<AppSelectOption, 
   };
 }
 
+/** Material-style stock movement (Amos / M3 palette) */
+function getM3SelectStyles(hasError: boolean): StylesConfig<AppSelectOption, false, GroupBase<AppSelectOption>> {
+  return {
+    control: (base, state) => ({
+      ...base,
+      minHeight: 48,
+      borderRadius: 8,
+      borderWidth: 0,
+      borderColor: "transparent",
+      boxShadow: state.isFocused && !hasError ? "0 0 0 2px #a04100" : hasError ? "0 0 0 1px #ba1a1a" : "none",
+      "&:hover": { backgroundColor: "#eceef0" },
+      backgroundColor: "#f2f4f6",
+    }),
+    singleValue: (base) => ({ ...base, color: "#191c1e", fontWeight: 400 }),
+    placeholder: (base) => ({ ...base, color: "#5a4136" }),
+    input: (base) => ({ ...base, color: "#191c1e" }),
+    option: (base, state) => ({
+      ...base,
+      backgroundColor: state.isSelected
+        ? "#a04100"
+        : state.isFocused
+          ? "rgba(160, 65, 0, 0.08)"
+          : "#ffffff",
+      color: state.isSelected ? "#ffffff" : "#191c1e",
+    }),
+    menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+    menu: (base) => ({ ...base, zIndex: 9999, borderRadius: 8 }),
+  };
+}
+
 export function AppReactSelect({
   label,
   value,
@@ -87,7 +117,11 @@ export function AppReactSelect({
 }: AppReactSelectProps) {
   const id = useId();
   const styles =
-    visualVariant === "solar" ? getSolarSelectStyles(!!error) : getSelectStyles(!!error);
+    visualVariant === "solar"
+      ? getSolarSelectStyles(!!error)
+      : visualVariant === "m3"
+        ? getM3SelectStyles(!!error)
+        : getSelectStyles(!!error);
   return (
     <div className={className}>
       {label ? (
@@ -95,7 +129,11 @@ export function AppReactSelect({
           htmlFor={id}
           className={cn(
             "mb-1.5 block text-sm font-medium",
-            visualVariant === "solar" ? "ml-1 font-bold text-[#595c5d]" : "text-slate-700"
+            visualVariant === "solar"
+              ? "ml-1 font-bold text-[#595c5d]"
+              : visualVariant === "m3"
+                ? "font-semibold text-[#5a4136]"
+                : "text-slate-700"
           )}
         >
           {label}

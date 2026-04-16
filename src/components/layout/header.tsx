@@ -32,6 +32,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/reports/conference": "Conference Reports",
   "/assets": "Assets",
   "/lost-and-found": "Lost & Found",
+  "/pricing-rules": "Pricing rules",
+  "/restaurant/pricing-rules": "Restaurant pricing rules",
   "/pos/menu-items": "Menu Items",
   "/pos/tables": "Tables",
   "/pos/orders": "Orders",

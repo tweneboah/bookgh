@@ -1,0 +1,16 @@
+/* Scoped M3 + Material Symbols for stock movement page (matches reference HTML) */
+.stock-movement-m3 .material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  line-height: 1;
+}
+
+.stock-movement-m3 .material-symbols-outlined.fill-1 {
+  font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.stock-movement-m3 h1,
+.stock-movement-m3 h2,
+.stock-movement-m3 h3,
+.stock-movement-m3 .font-headline {
+  font-family: var(--font-stock-movement-headline), "Manrope", ui-sans-serif, system-ui, sans-serif;
+}

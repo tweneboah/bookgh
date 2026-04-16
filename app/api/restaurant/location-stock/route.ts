@@ -37,9 +37,37 @@ export const GET = withHandler(
       filter.location = location;
     }
 
-    const locationStocks = await LocationStockModel.find(filter as any)
-      .populate("inventoryItemId", "name unit category")
-      .lean();
+    // Lean only: populate() drops the ref ObjectId when the InventoryItem doc is missing,
+    // which makes the client show "Unknown item (no link)" even when the row still points at a valid id.
+    const locationStocks = await LocationStockModel.find(filter as any).lean();
+    const rawInvIds = [
+      ...new Set(
+        locationStocks
+          .map((s: any) => s.inventoryItemId)
+          .filter(Boolean)
+          .map((id: unknown) => String(id))
+      ),
+    ];
+    const invDocs = rawInvIds.length
+      ? await InventoryItemModel.find(
+          { _id: { $in: rawInvIds }, tenantId, branchId } as any,
+          { name: 1, unit: 1, category: 1 }
+        ).lean()
+      : [];
+    const invById = new Map(invDocs.map((i: any) => [String(i._id), i]));
+
+    const mapLocationRow = (s: any) => {
+      const idStr = s.inventoryItemId ? String(s.inventoryItemId) : "";
+      const inv = idStr ? invById.get(idStr) : undefined;
+      return {
+        _id: s._id,
+        inventoryItemId: idStr || null,
+        itemName: inv?.name ?? "",
+        unit: s.unit,
+        quantity: s.quantity,
+        location: s.location,
+      };
+    };
 
     // Main store: use InventoryItem.currentStock
     const mainStoreFilter = location === STOCK_LOCATION.MAIN_STORE || !location;
@@ -65,20 +93,8 @@ export const GET = withHandler(
         quantity: i.currentStock,
         location: STOCK_LOCATION.MAIN_STORE,
       })),
-      kitchen: kitchenItems.map((s: any) => ({
-        inventoryItemId: s.inventoryItemId?._id ?? s.inventoryItemId,
-        itemName: s.inventoryItemId?.name ?? "",
-        unit: s.unit,
-        quantity: s.quantity,
-        location: STOCK_LOCATION.KITCHEN,
-      })),
-      frontHouse: frontHouseItems.map((s: any) => ({
-        inventoryItemId: s.inventoryItemId?._id ?? s.inventoryItemId,
-        itemName: s.inventoryItemId?.name ?? "",
-        unit: s.unit,
-        quantity: s.quantity,
-        location: STOCK_LOCATION.FRONT_HOUSE,
-      })),
+      kitchen: kitchenItems.map(mapLocationRow),
+      frontHouse: frontHouseItems.map(mapLocationRow),
     });
   },
   { auth: true }

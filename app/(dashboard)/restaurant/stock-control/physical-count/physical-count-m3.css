@@ -1,0 +1,16 @@
+/* Physical stock count — M3 + Material Symbols (reference HTML) */
+.physical-count-m3 .material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  line-height: 1;
+}
+
+.physical-count-m3 .material-symbols-outlined.fill-1 {
+  font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.physical-count-m3 h1,
+.physical-count-m3 h2,
+.physical-count-m3 h3,
+.physical-count-m3 .font-headline {
+  font-family: var(--font-physical-count-headline), "Manrope", ui-sans-serif, system-ui, sans-serif;
+}

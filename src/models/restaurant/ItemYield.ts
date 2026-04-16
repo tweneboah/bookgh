@@ -1,9 +1,13 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 import { tenantPlugin, branchPlugin, createdByPlugin } from "@/lib/plugins";
+import { DEPARTMENT } from "@/constants";
+/** Register before populate(); refs use model name "RestaurantUnit". */
+import "./RestaurantUnit";
 
 export interface IItemYield extends Document {
   tenantId: Schema.Types.ObjectId;
   branchId: Schema.Types.ObjectId;
+  department: string;
   inventoryItemId: Schema.Types.ObjectId;
   fromUnitId: Schema.Types.ObjectId;
   fromQty: number;
@@ -21,6 +25,13 @@ export interface IItemYield extends Document {
 
 const itemYieldSchema = new Schema<IItemYield>(
   {
+    department: {
+      type: String,
+      enum: Object.values(DEPARTMENT),
+      default: DEPARTMENT.RESTAURANT,
+      required: true,
+      index: true,
+    },
     inventoryItemId: {
       type: Schema.Types.ObjectId,
       ref: "InventoryItem",
@@ -63,6 +74,17 @@ const existingItemYieldModel = mongoose.models.ItemYield as Model<IItemYield> | 
 if (existingItemYieldModel && !existingItemYieldModel.schema.path("baseUnitQty")) {
   existingItemYieldModel.schema.add({
     baseUnitQty: { type: Number, min: 0.0001 },
+  });
+}
+if (existingItemYieldModel && !existingItemYieldModel.schema.path("department")) {
+  existingItemYieldModel.schema.add({
+    department: {
+      type: String,
+      enum: Object.values(DEPARTMENT),
+      default: DEPARTMENT.RESTAURANT,
+      required: true,
+      index: true,
+    },
   });
 }
 

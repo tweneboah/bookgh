@@ -21,6 +21,11 @@ import {
 } from "@/constants";
 import { getPricingRuleModelForDepartment } from "@/lib/department-pricing";
 import { getInvoiceModelForDepartment } from "@/lib/department-invoice";
+import {
+  addBackRestaurantCascade,
+  applyRestaurantCascadeSale,
+  getRestaurantStockBuckets,
+} from "@/lib/restaurant-order-inventory";
 
 type OrderItemInput = {
   menuItemId: string | mongoose.Types.ObjectId;
@@ -306,6 +311,25 @@ export async function ensureSufficientBarStock(input: {
   } as any).lean();
   const inventoryMap = new Map(inventory.map((item: any) => [String(item._id), item]));
 
+  if (department === DEPARTMENT.RESTAURANT) {
+    for (const [inventoryId, requirement] of requirementMap.entries()) {
+      const item = inventoryMap.get(inventoryId);
+      if (!item) throw new NotFoundError(`Inventory item ${inventoryId}`);
+      const { frontHouse } = await getRestaurantStockBuckets({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        department,
+        inventoryItemId: inventoryId,
+      });
+      if (frontHouse < requirement.requiredQty) {
+        throw new BadRequestError(
+          `Insufficient stock at Front House for ${item.name}. Required ${requirement.requiredQty}, available ${frontHouse}. Move stock from Kitchen to Front House (Movement flow) before taking or serving orders.`
+        );
+      }
+    }
+    return;
+  }
+
   for (const [inventoryId, requirement] of requirementMap.entries()) {
     const item = inventoryMap.get(inventoryId);
     if (!item) throw new NotFoundError(`Inventory item ${inventoryId}`);
@@ -315,6 +339,120 @@ export async function ensureSufficientBarStock(input: {
       );
     }
   }
+}
+
+export async function estimateOrderLineStockCaps(input: {
+  tenantId: string;
+  branchId: string;
+  items: Array<{
+    menuItemId: string | mongoose.Types.ObjectId;
+    name?: string;
+    quantity: number;
+    lineIndex?: number;
+  }>;
+  department?: string | null;
+}) {
+  const department = normalizeInventoryDepartment(
+    input.department,
+    DEPARTMENT.BAR
+  );
+  const InventoryItemModel = getInventoryItemModelForDepartment(department);
+  const inventoryCache = new Map<string, any | null>();
+  const frontHouseCache = new Map<string, number>();
+
+  async function getInventoryItem(inventoryItemId: string) {
+    if (inventoryCache.has(inventoryItemId)) {
+      return inventoryCache.get(inventoryItemId);
+    }
+    const item = await InventoryItemModel.findOne({
+      _id: inventoryItemId,
+      tenantId: input.tenantId,
+      branchId: input.branchId,
+    } as any).lean();
+    inventoryCache.set(inventoryItemId, item ?? null);
+    return item ?? null;
+  }
+
+  async function getAvailableQty(inventoryItemId: string) {
+    if (department === DEPARTMENT.RESTAURANT) {
+      if (frontHouseCache.has(inventoryItemId)) {
+        return frontHouseCache.get(inventoryItemId) ?? 0;
+      }
+      const buckets = await getRestaurantStockBuckets({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        department,
+        inventoryItemId,
+      });
+      frontHouseCache.set(inventoryItemId, Number(buckets.frontHouse ?? 0));
+      return Number(buckets.frontHouse ?? 0);
+    }
+    const item = await getInventoryItem(inventoryItemId);
+    return Number(item?.currentStock ?? 0);
+  }
+
+  const lineHints = await Promise.all(
+    input.items.map(async (line, idx) => {
+      const lineIndex = Number(line.lineIndex ?? idx);
+      const oneUnitRequirements = await buildRecipeRequirementMap({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        department,
+        items: [
+          {
+            menuItemId: line.menuItemId,
+            name: line.name ?? "",
+            quantity: 1,
+            unitPrice: 0,
+            amount: 0,
+          },
+        ],
+      });
+
+      if (oneUnitRequirements.size === 0) {
+        return {
+          lineIndex,
+          menuItemId: String(line.menuItemId),
+          requestedQty: Number(line.quantity ?? 0),
+          maxQty: null as number | null,
+          limitingItemName: null as string | null,
+          availableQty: null as number | null,
+          unit: null as string | null,
+        };
+      }
+
+      let maxQty = Number.POSITIVE_INFINITY;
+      let limitingItemName: string | null = null;
+      let limitingAvailableQty: number | null = null;
+      let limitingUnit: string | null = null;
+
+      for (const [inventoryId, requirement] of oneUnitRequirements.entries()) {
+        const perUnitNeed = Number(requirement.requiredQty ?? 0);
+        if (!Number.isFinite(perUnitNeed) || perUnitNeed <= 0) continue;
+        const availableQty = await getAvailableQty(inventoryId);
+        const possibleQty = Math.floor(availableQty / perUnitNeed);
+        if (possibleQty < maxQty) {
+          const item = await getInventoryItem(inventoryId);
+          maxQty = possibleQty;
+          limitingItemName = item?.name ? String(item.name) : null;
+          limitingAvailableQty = Number(availableQty.toFixed(4));
+          limitingUnit = requirement.unit ?? null;
+        }
+      }
+
+      return {
+        lineIndex,
+        menuItemId: String(line.menuItemId),
+        requestedQty: Number(line.quantity ?? 0),
+        maxQty: Number.isFinite(maxQty) ? Math.max(0, maxQty) : null,
+        limitingItemName,
+        availableQty: limitingAvailableQty,
+        unit: limitingUnit,
+      };
+    })
+  );
+
+  return lineHints;
 }
 
 export async function applyInventoryMovementsForOrder(input: {
@@ -341,6 +479,164 @@ export async function applyInventoryMovementsForOrder(input: {
   );
   const InventoryItemModel = getInventoryItemModelForDepartment(department);
   const InventoryMovementModel = getInventoryMovementModelForDepartment(department);
+
+  const orderOid = mongoose.Types.ObjectId.isValid(input.orderId)
+    ? new mongoose.Types.ObjectId(input.orderId)
+    : input.orderId;
+
+  /** Restaurant: sales deduct Front house only; transfers handle main ↔ kitchen ↔ FH. */
+  if (department === DEPARTMENT.RESTAURANT) {
+    if (input.movementType === "reversal") {
+      const saleMovements = await InventoryMovementModel.find({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        orderId: orderOid,
+        movementType: INVENTORY_MOVEMENT_TYPE.SALE,
+      } as Record<string, unknown>).lean();
+
+      if (saleMovements.length > 0) {
+        for (const m of saleMovements) {
+          const invId = String((m as { inventoryItemId?: unknown }).inventoryItemId);
+          const qty = Number((m as { quantity?: number }).quantity ?? 0);
+          const meta = (m as { metadata?: { restaurantCascade?: { frontHouse: number; kitchen: number; mainStore: number } } }).metadata;
+          const cascade = meta?.restaurantCascade;
+
+          const before = await getRestaurantStockBuckets({
+            tenantId: input.tenantId,
+            branchId: input.branchId,
+            department,
+            inventoryItemId: invId,
+          });
+
+          if (
+            cascade &&
+            (cascade.frontHouse > 0 || cascade.kitchen > 0 || cascade.mainStore > 0)
+          ) {
+            await addBackRestaurantCascade({
+              tenantId: input.tenantId,
+              branchId: input.branchId,
+              department,
+              inventoryItemId: invId,
+              breakdown: cascade,
+            });
+          } else {
+            const inventory = await InventoryItemModel.findOne({
+              _id: invId,
+              tenantId: input.tenantId,
+              branchId: input.branchId,
+            } as Record<string, unknown>);
+            if (inventory) {
+              inventory.currentStock = Number(
+                (Number(inventory.currentStock ?? 0) + qty).toFixed(4)
+              );
+              await inventory.save();
+            }
+          }
+
+          const after = await getRestaurantStockBuckets({
+            tenantId: input.tenantId,
+            branchId: input.branchId,
+            department,
+            inventoryItemId: invId,
+          });
+
+          await InventoryMovementModel.create({
+            tenantId: input.tenantId,
+            branchId: input.branchId,
+            inventoryItemId: invId,
+            orderId: orderOid,
+            shiftId: input.shiftId,
+            movementType: INVENTORY_MOVEMENT_TYPE.REVERSAL,
+            quantity: qty,
+            unit: String((m as { unit?: string }).unit ?? "unit"),
+            previousStock: before.frontHouse,
+            resultingStock: after.frontHouse,
+            reason: input.reason,
+            createdBy: input.userId,
+            metadata: {
+              source: `${department}-order-reversal`,
+              reversedSaleMovementId: String((m as { _id?: unknown })._id),
+            },
+          } as Record<string, unknown>);
+        }
+        return;
+      }
+      for (const [inventoryItemId, requirement] of requirementMap.entries()) {
+        const inventory = await InventoryItemModel.findOne({
+          _id: inventoryItemId,
+          tenantId: input.tenantId,
+          branchId: input.branchId,
+        } as Record<string, unknown>);
+        if (!inventory) throw new NotFoundError(`Inventory item ${inventoryItemId}`);
+        const before = await getRestaurantStockBuckets({
+          tenantId: input.tenantId,
+          branchId: input.branchId,
+          department,
+          inventoryItemId: String(inventoryItemId),
+        });
+        inventory.currentStock = Number(
+          (Number(inventory.currentStock ?? 0) + requirement.requiredQty).toFixed(4)
+        );
+        await inventory.save();
+        const after = await getRestaurantStockBuckets({
+          tenantId: input.tenantId,
+          branchId: input.branchId,
+          department,
+          inventoryItemId: String(inventoryItemId),
+        });
+        await InventoryMovementModel.create({
+          tenantId: input.tenantId,
+          branchId: input.branchId,
+          inventoryItemId,
+          orderId: orderOid,
+          shiftId: input.shiftId,
+          movementType: INVENTORY_MOVEMENT_TYPE.REVERSAL,
+          quantity: requirement.requiredQty,
+          unit: requirement.unit,
+          previousStock: before.mainStore,
+          resultingStock: after.mainStore,
+          reason: input.reason,
+          createdBy: input.userId,
+          metadata: { source: `${department}-order-reversal-fallback` },
+        } as Record<string, unknown>);
+      }
+      return;
+    }
+
+    for (const [inventoryItemId, requirement] of requirementMap.entries()) {
+      const result = await applyRestaurantCascadeSale({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        department,
+        inventoryItemId: String(inventoryItemId),
+        requiredQty: requirement.requiredQty,
+        unit: requirement.unit,
+      });
+      await InventoryMovementModel.create({
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        inventoryItemId,
+        orderId: orderOid,
+        shiftId: input.shiftId,
+        movementType: INVENTORY_MOVEMENT_TYPE.SALE,
+        quantity: requirement.requiredQty,
+        unit: requirement.unit,
+        previousStock: result.frontHouseBefore,
+        resultingStock: result.frontHouseAfter,
+        reason: input.reason,
+        createdBy: input.userId,
+        metadata: {
+          source: `${department}-order`,
+          restaurantCascade: result.breakdown,
+          frontHouseQtyBefore: result.frontHouseBefore,
+          frontHouseQtyAfter: result.frontHouseAfter,
+          totalOnHandBefore: result.totalBefore,
+          totalOnHandAfter: result.totalAfter,
+        },
+      } as Record<string, unknown>);
+    }
+    return;
+  }
 
   for (const [inventoryItemId, requirement] of requirementMap.entries()) {
     const inventory = await InventoryItemModel.findOne({

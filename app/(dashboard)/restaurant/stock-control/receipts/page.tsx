@@ -89,7 +89,8 @@ export default function RestaurantReceiptsPage() {
                   <div>
                     <dt className="text-slate-500 font-medium">Total units</dt>
                     <dd className="text-slate-900 mt-0.5">
-                      {Number(sc.selectedReceiptGroup.totalUnits).toFixed(3)}
+                      {Number(sc.selectedReceiptGroup.totalUnits).toFixed(3)}{" "}
+                      <span className="text-xs font-normal text-slate-500">(inventory units; yield per line)</span>
                     </dd>
                   </div>
                 </dl>
@@ -102,29 +103,69 @@ export default function RestaurantReceiptsPage() {
                           Ingredient
                         </th>
                         <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          Qty received
+                          <span className="block">Qty received</span>
+                          <span className="block text-[10px] font-normal normal-case text-slate-400">
+                            (+ yield equiv.)
+                          </span>
                         </th>
                         <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
                           Unit
                         </th>
                         <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          Stock (before → after)
+                          <span className="block">Stock (before → after)</span>
+                          <span className="block text-[10px] font-normal normal-case text-slate-400">
+                            (+ yield equiv.)
+                          </span>
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {sc.selectedReceiptGroup.lines.map((line, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/80">
-                          <td className="px-4 py-2.5 font-medium text-slate-800">{line.itemName}</td>
-                          <td className="px-4 py-2.5 text-slate-700">
-                            {Number(line.quantity).toFixed(3)}
-                          </td>
-                          <td className="px-4 py-2.5 text-slate-600">{line.unit}</td>
-                          <td className="px-4 py-2.5 text-slate-600">
-                            {Number(line.previousStock).toFixed(3)} → {Number(line.resultingStock).toFixed(3)}
-                          </td>
-                        </tr>
-                      ))}
+                      {sc.selectedReceiptGroup.lines.map((line, idx) => {
+                        const item = line.inventoryItemId
+                          ? sc.inventoryMap[line.inventoryItemId]
+                          : undefined;
+                        const qtyYield = item ? sc.formatYieldEquivLine(item, line.quantity) : null;
+                        const prevYield = item ? sc.formatYieldEquivLine(item, line.previousStock) : null;
+                        const resultYield = item ? sc.formatYieldEquivLine(item, line.resultingStock) : null;
+                        const stockYieldLine =
+                          prevYield || resultYield
+                            ? `${prevYield ?? "—"} → ${resultYield ?? "—"}`
+                            : null;
+                        return (
+                          <tr key={idx} className="hover:bg-slate-50/80">
+                            <td className="px-4 py-2.5 font-medium text-slate-800">{line.itemName}</td>
+                            <td className="px-4 py-2.5 text-slate-700">
+                              <div>{Number(line.quantity).toFixed(3)}</div>
+                              {qtyYield ? (
+                                <p className="mt-0.5 text-[10px] font-medium leading-snug text-slate-500">
+                                  {qtyYield}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-600">
+                              <div>
+                                {line.unit}
+                                {qtyYield ? (
+                                  <p className="mt-0.5 text-[10px] font-medium leading-snug text-slate-500">
+                                    {qtyYield}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-600">
+                              <div>
+                                {Number(line.previousStock).toFixed(3)} →{" "}
+                                {Number(line.resultingStock).toFixed(3)}
+                              </div>
+                              {stockYieldLine ? (
+                                <p className="mt-0.5 text-[10px] font-medium leading-snug text-slate-500">
+                                  {stockYieldLine}
+                                </p>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -141,7 +182,10 @@ export default function RestaurantReceiptsPage() {
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Delivery note</th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Type</th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Items</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Total units</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <span className="block">Total units</span>
+                      <span className="block text-[10px] font-normal normal-case text-slate-400">(inventory)</span>
+                    </th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Actions</th>
                   </tr>
                 </thead>

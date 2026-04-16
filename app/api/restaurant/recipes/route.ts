@@ -7,8 +7,11 @@ import { createRecipeSchema } from "@/validations/restaurant";
 import { writeActivityLog } from "@/lib/activity-log";
 import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
 import { getRecipeModelForDepartment } from "@/lib/department-restaurant";
+import { getKitchenUsageModelForDepartment } from "@/lib/department-movement";
 import { convertToBaseUnitQuantity, buildYieldMap, convertChefQtyToBaseQty } from "@/lib/unit-conversion";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import mongoose from "mongoose";
+import { applyKitchenUsageStockEffects } from "@/lib/kitchen-usage-stock";
 import ItemYield from "@/models/restaurant/ItemYield";
 
 const SORT_FIELDS = ["menuItemName", "costPerPortion", "grossMarginPercent", "createdAt"];
@@ -138,6 +141,36 @@ export const POST = withHandler(
       grossMarginPercent,
       createdBy: auth.userId,
     } as Record<string, unknown>);
+
+    const KitchenUsageModel = getKitchenUsageModelForDepartment("restaurant");
+    const usageRef = `AUTO_RECIPE_REF:${String(doc._id)}`;
+    const kitchenUsageDoc = await KitchenUsageModel.create({
+      tenantId,
+      branchId,
+      department: "restaurant",
+      usageDate: new Date(),
+      lines: normalizedIngredients.map((row) => ({
+        inventoryItemId: row.inventoryItemId,
+        itemName: row.name,
+        // Auto recipe usage does not come from a transfer; record as direct consumption.
+        issuedQty: Number(row.quantity ?? 0),
+        usedQty: Number(row.quantity ?? 0),
+        leftoverQty: 0,
+        unit: row.unit,
+        note: `Auto from recipe ${data.menuItemName} (${usageRef})`,
+      })),
+      notes: data.preparationInstructions
+        ? `Auto-generated from recipe (${usageRef}). ${data.preparationInstructions}`
+        : `Auto-generated from recipe (${usageRef})`,
+      createdBy: auth.userId,
+    } as Record<string, unknown>);
+    await applyKitchenUsageStockEffects({
+      doc: kitchenUsageDoc as { _id: mongoose.Types.ObjectId; lines?: unknown[] },
+      tenantId,
+      branchId,
+      department: "restaurant",
+      userId: auth.userId,
+    });
 
     await writeActivityLog(req, auth, {
       action: "RESTAURANT_RECIPE_CREATED",

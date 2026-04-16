@@ -159,14 +159,14 @@ const NAV_SECTIONS: NavSection[] = [
     ],
     roles: ["customer"],
   },
-  {
-    title: "Hotel Branches",
-    icon: Building2,
-    items: [
-      { href: "/branches", label: "Branches", icon: GitBranch },
-    ],
-    roles: ADMIN_ROLES,
-  },
+  // {
+  //   title: "Hotel Branches",
+  //   icon: Building2,
+  //   items: [
+  //     { href: "/branches", label: "Branches", icon: GitBranch },
+  //   ],
+  //   roles: ADMIN_ROLES,
+  // },
   {
     title: "Restaurant Department",
     icon: UtensilsCrossed,
@@ -175,7 +175,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/restaurant/roles", label: "Staff & roles", icon: ShieldCheck, requiredPermissions: [RESTAURANT_PERMISSIONS.ROLES_VIEW] },
       { href: "/inventory-procurement/suppliers?department=restaurant", label: "Suppliers", icon: Briefcase, requiredPermissions: [RESTAURANT_PERMISSIONS.SUPPLIERS_VIEW] },
       { href: "/inventory-procurement/purchase-orders?department=restaurant", label: "Purchase Orders", icon: ShoppingCart, requiredPermissions: [RESTAURANT_PERMISSIONS.PURCHASE_ORDERS_VIEW] },
-      { href: "/inventory-procurement/transfers?department=restaurant", label: "Transfers", icon: GitBranch, requiredPermissions: [RESTAURANT_PERMISSIONS.TRANSFERS_VIEW] },
       { href: "/restaurant/movement-flow", label: "Movement Flow", icon: Layers, requiredPermissions: [RESTAURANT_PERMISSIONS.MOVEMENT_FLOW_VIEW] },
       { href: "/restaurant/stock-control", label: "Stock Control (Overview)", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
       { href: "/restaurant/stock-control/movement", label: "Record Movement", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.STOCK_CONTROL_VIEW] },
@@ -188,25 +187,12 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/restaurant/recipes", label: "Recipe Engine", icon: CheckCircle2, requiredPermissions: [RESTAURANT_PERMISSIONS.RECIPES_VIEW] },
       { href: "/restaurant/production", label: "Production Batches", icon: Box, requiredPermissions: [RESTAURANT_PERMISSIONS.PRODUCTION_VIEW] },
       { href: "/pos/menu-items?department=restaurant", label: "Menu Items", icon: UtensilsCrossed, requiredPermissions: [RESTAURANT_PERMISSIONS.MENU_ITEMS_VIEW] },
+      { href: "/restaurant/pricing-rules", label: "Pricing Rules", icon: Tags, requiredPermissions: [RESTAURANT_PERMISSIONS.MENU_ITEMS_VIEW] },
       { href: "/pos/tables?department=restaurant", label: "Tables", icon: LayoutDashboard, requiredPermissions: [RESTAURANT_PERMISSIONS.TABLES_VIEW] },
       { href: "/pos/orders?department=restaurant", label: "Orders", icon: ShoppingCart, requiredPermissions: [RESTAURANT_PERMISSIONS.ORDERS_VIEW, RESTAURANT_PERMISSIONS.ORDERS_CREATE] },
       { href: "/restaurant/kds", label: "KDS Workflow", icon: Clock, requiredPermissions: [RESTAURANT_PERMISSIONS.KDS_VIEW] },
       { href: "/reports/restaurant", label: "Restaurant Reports", icon: BarChart3, requiredPermissions: [RESTAURANT_PERMISSIONS.REPORTS_VIEW] },
       { href: "/reports/restaurant-consolidated", label: "Consolidated Reports", icon: Building2, requiredPermissions: [RESTAURANT_PERMISSIONS.REPORTS_VIEW] },
-      { href: "/payments?department=restaurant", label: "Payments", icon: CreditCard, requiredPermissions: [RESTAURANT_PERMISSIONS.PAYMENTS_VIEW] },
-      { href: "/expenses?department=restaurant", label: "Expenses", icon: Receipt, requiredPermissions: [RESTAURANT_PERMISSIONS.EXPENSES_VIEW] },
-      {
-        href: "/reports/department?department=restaurant",
-        label: "Accounting",
-        icon: PieChart,
-        requiredPermissions: [RESTAURANT_PERMISSIONS.ACCOUNTING_VIEW],
-      },
-      {
-        href: "/reports/income-expense-statement",
-        label: "Income & Expense Statement",
-        icon: FileText,
-        requiredPermissions: [RESTAURANT_PERMISSIONS.ACCOUNTING_VIEW],
-      },
     ],
     roles: [
       ...ADMIN_ROLES,
@@ -235,6 +221,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/bar/role-matrix", label: "Staff & roles", icon: ShieldCheck, requiredPermissions: [BAR_PERMISSIONS.ROLES_VIEW] },
       { href: "/bar/menu-items", label: "Menu Items", icon: Wine, requiredPermissions: [BAR_PERMISSIONS.MENU_ITEMS_VIEW] },
       { href: "/bar/recipes", label: "Recipes", icon: CheckCircle2, requiredPermissions: [BAR_PERMISSIONS.RECIPES_VIEW] },
+      { href: "/bar/units", label: "Units & Yields", icon: Tags, requiredPermissions: [BAR_PERMISSIONS.INVENTORY_ITEMS_VIEW, BAR_PERMISSIONS.RECIPES_VIEW] },
       { href: "/bar/inventory-items", label: "Inventory Items", icon: Square, requiredPermissions: [BAR_PERMISSIONS.INVENTORY_ITEMS_VIEW] },
       { href: "/bar/orders", label: "Orders", icon: ShoppingCart, requiredPermissions: [BAR_PERMISSIONS.ORDER_CREATE, BAR_PERMISSIONS.ORDER_UPDATE] },
       { href: "/bar/inventory", label: "Inventory", icon: Archive, requiredPermissions: [BAR_PERMISSIONS.INVENTORY_VIEW] },
@@ -254,7 +241,16 @@ const NAV_SECTIONS: NavSection[] = [
       },
       { href: "/bar/finance", label: "Finance", icon: FileText, requiredPermissions: [BAR_PERMISSIONS.FINANCE_VIEW] },
     ],
-    roles: [...ADMIN_ROLES, "barManager", "bartender", "barCashier", "accountant"],
+    roles: [
+      ...ADMIN_ROLES,
+      "superAdmin",
+      "hotelOwner",
+      "financeManager",
+      "barManager",
+      "bartender",
+      "barCashier",
+      "accountant",
+    ],
   },
   {
     title: "Accommodation",
@@ -410,9 +406,14 @@ const NAV_SECTIONS: NavSection[] = [
         icon: FileText,
         requiredPermissions: [FINANCE_PERMISSIONS.FINANCIAL_REPORTS_VIEW],
       },
-      { href: "/staff/salary-payments", label: "Salary payments", icon: DollarSign, requiredPermissions: [FINANCE_PERMISSIONS.EXPENSES_VIEW] },
-      { href: "/staff/salary-structures", label: "Salary structures", icon: Layers, requiredPermissions: [FINANCE_PERMISSIONS.EXPENSES_VIEW] },
-      { href: "/payments?department=financeAccounting", label: "Payments", icon: CreditCard, requiredPermissions: [FINANCE_PERMISSIONS.PAYMENTS_VIEW] },
+      { href: "/payments?department=restaurant", label: "Payments (Restaurant)", icon: CreditCard, requiredPermissions: [FINANCE_PERMISSIONS.PAYMENTS_VIEW] },
+      { href: "/expenses?department=restaurant", label: "Expenses (Restaurant)", icon: Receipt, requiredPermissions: [FINANCE_PERMISSIONS.EXPENSES_VIEW] },
+      {
+        href: "/reports/department?department=restaurant",
+        label: "Department P&L (Restaurant)",
+        icon: PieChart,
+        requiredPermissions: [FINANCE_PERMISSIONS.DEPARTMENT_PL_VIEW],
+      },
       { href: "/expenses?department=financeAccounting", label: "Expenses", icon: Receipt, requiredPermissions: [FINANCE_PERMISSIONS.EXPENSES_VIEW] },
       {
         href: "/reports/department?department=financeAccounting",
@@ -453,32 +454,30 @@ const NAV_SECTIONS: NavSection[] = [
   //   hiddenOnPathPrefixes: ["/bar"],
   // },
   
-  {
-    title: "Staff Management",
-    icon: Users,
-    items: [
-      { href: "/users", label: "Users", icon: UserCircle },
-      { href: "/staff/salary-payments", label: "Salary payments", icon: DollarSign },
-      { href: "/staff/salary-structures", label: "Salary structures", icon: Layers },
-      { href: "/staff/shifts", label: "Shifts", icon: Clock },
-      { href: "/staff/attendance", label: "Attendance", icon: CheckCircle2 },
-      { href: "/staff/performance", label: "Performance", icon: Award },
-      { href: "/reports/staff", label: "Staff Reports", icon: BarChart3 },
-      {
-        href: "/reports/department?department=staffManagement",
-        label: "Accounting",
-        icon: PieChart,
-      },
-    ],
-    roles: [...ADMIN_ROLES, "hrManager"],
-  },
+  // {
+  //   title: "Staff Management",
+  //   icon: Users,
+  //   items: [
+  //     { href: "/users", label: "Users", icon: UserCircle },
+  //     { href: "/staff/shifts", label: "Shifts", icon: Clock },
+  //     { href: "/staff/attendance", label: "Attendance", icon: CheckCircle2 },
+  //     { href: "/staff/performance", label: "Performance", icon: Award },
+  //     { href: "/reports/staff", label: "Staff Reports", icon: BarChart3 },
+  //     {
+  //       href: "/reports/department?department=staffManagement",
+  //       label: "Accounting",
+  //       icon: PieChart,
+  //     },
+  //   ],
+  //   roles: [...ADMIN_ROLES, "hrManager"],
+  // },
   {
     title: "Settings",
     icon: Settings,
     items: [
       { href: "/settings", label: "Profile", icon: Settings },
-      { href: "/settings/website-builder", label: "Website builder", icon: Layout },
-      { href: "/notifications", label: "Notifications", icon: Bell },
+      // { href: "/settings/website-builder", label: "Website builder", icon: Layout },
+      // { href: "/notifications", label: "Notifications", icon: Bell },
       { href: "/activity-logs", label: "Activity Logs", icon: Clock },
     ],
     roles: STAFF_ROLES,
@@ -998,14 +997,14 @@ export function Sidebar() {
                           const activeHref = getActiveHref(pathname, flatForActive);
                           return sectionItems.map((item) =>
                             item.children?.length ? (
-                              <li key={item.href} className="space-y-0.5">
+                              <li key={item.href + item.label} className="space-y-0.5">
                                 <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                                   <item.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
                                   <span className="truncate">{item.label}</span>
                                 </div>
                                 <ul className="ml-1 space-y-0.5 border-l border-slate-200/90 pl-2">
                                   {item.children.map((child) => (
-                                    <li key={child.href}>
+                                    <li key={child.href + child.label}>
                                       <NavLink
                                         {...child}
                                         collapsed={false}
@@ -1016,7 +1015,7 @@ export function Sidebar() {
                                 </ul>
                               </li>
                             ) : (
-                              <li key={item.href}>
+                              <li key={item.href + item.label}>
                                 <NavLink
                                   {...item}
                                   collapsed={false}

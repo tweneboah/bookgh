@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:bar:smoke": "node scripts/bar-e2e-smoke.mjs"
+    "test:bar:smoke": "node scripts/bar-e2e-smoke.mjs",
+    "seed:platform-owner": "node scripts/seed-platform-owner.mjs"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",

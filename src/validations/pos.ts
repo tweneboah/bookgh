@@ -54,6 +54,20 @@ const orderItemSchema = z.object({
   notes: z.string().optional(),
 });
 
+export const validateOrderStockSchema = z.object({
+  department: z.string().optional(),
+  items: z
+    .array(
+      z.object({
+        lineIndex: z.number().int().min(0).optional(),
+        menuItemId: z.string().min(1),
+        name: z.string().optional(),
+        quantity: z.number().positive(),
+      })
+    )
+    .min(1),
+});
+
 export const createOrderSchema = z.object({
   tableId: z.string().optional(),
   roomId: z.string().optional(),
@@ -153,9 +167,10 @@ export const createInventoryItemSchema = z.object({
   minimumStock: z.number().min(0).optional(),
   reorderLevel: z.number().min(0).optional(),
   unitCost: z.number().min(0).optional(),
-  purchaseUnitId: z.string().optional(),
-  yieldUnitId: z.string().optional(),
-  yieldPerPurchaseUnit: z.number().positive().optional(),
+  /** Use `null` on PATCH to clear chef/yield links when moving conversions to Yield mappings only. */
+  purchaseUnitId: z.union([z.string().min(1), z.null()]).optional(),
+  yieldUnitId: z.union([z.string().min(1), z.null()]).optional(),
+  yieldPerPurchaseUnit: z.union([z.number().positive(), z.null()]).optional(),
   supplier: z.string().optional(),
   sku: z.string().optional(),
   volumeMl: z.number().min(0).optional(),

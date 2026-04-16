@@ -9,6 +9,7 @@ import {
   getInventoryItemModelsForQuery,
   normalizeInventoryDepartment,
 } from "@/lib/department-inventory";
+import { assertRestaurantYieldFieldsWhenUnitsExist } from "@/lib/restaurant-inventory-yield";
 
 export const GET = withHandler(
   async (_req, { params, auth }) => {
@@ -35,7 +36,7 @@ export const GET = withHandler(
         tenantId,
         branchId,
       } as Record<string, unknown>);
-      if (department === "restaurant") {
+      if (department === "restaurant" || department === "bar") {
         q = q
           .populate("purchaseUnitId", "name abbreviation type")
           .populate("yieldUnitId", "name abbreviation type");
@@ -72,6 +73,24 @@ export const PATCH = withHandler(
     );
     let doc: any = null;
     for (const Model of getInventoryItemModelsForQuery(department)) {
+      const existing = await Model.findOne({
+        _id: params.id,
+        tenantId,
+        branchId,
+      } as Record<string, unknown>).lean();
+      if (!existing) continue;
+
+      const merged = {
+        purchaseUnitId:
+          body.purchaseUnitId !== undefined ? body.purchaseUnitId : existing.purchaseUnitId,
+        yieldUnitId: body.yieldUnitId !== undefined ? body.yieldUnitId : existing.yieldUnitId,
+        yieldPerPurchaseUnit:
+          body.yieldPerPurchaseUnit !== undefined
+            ? body.yieldPerPurchaseUnit
+            : existing.yieldPerPurchaseUnit,
+      };
+      await assertRestaurantYieldFieldsWhenUnitsExist(tenantId, branchId, department, merged);
+
       doc = await Model.findOneAndUpdate(
         { _id: params.id, tenantId, branchId } as Record<string, unknown>,
         body,

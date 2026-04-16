@@ -1,0 +1,12 @@
+/* Receive POs — M3 Amos palette + Material Symbols (reference HTML) */
+.receive-pos-m3 .material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  line-height: 1;
+}
+
+.receive-pos-m3 h1,
+.receive-pos-m3 h2,
+.receive-pos-m3 h3,
+.receive-pos-m3 .font-headline {
+  font-family: var(--font-receive-pos-headline), "Manrope", ui-sans-serif, system-ui, sans-serif;
+}

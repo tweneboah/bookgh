@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   useOrders,
   useCreateOrder,
@@ -9,6 +9,8 @@ import {
   useTables,
   useMenuItems,
   useRooms,
+  usePricingRules,
+  useOrderStockValidation,
 } from "@/hooks/api";
 import {
   Button,
@@ -37,11 +39,85 @@ import {
   POS_ORDER_STATUS,
   POS_PAYMENT_STATUS,
   PAYMENT_METHOD,
+  MODIFIER_TYPE,
+  PRICING_RULE_TYPE,
 } from "@/constants";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("en-GH", { style: "currency", currency: "GHS" }).format(n);
+
+/** Mirrors `resolveBarOrderPricing` in `@/lib/bar-service` for POS preview. */
+function isRuleActiveForDate(rule: {
+  startDate?: Date | string;
+  endDate?: Date | string;
+  daysOfWeek?: number[];
+}): boolean {
+  const now = new Date();
+  if (rule.startDate && now < new Date(rule.startDate)) return false;
+  if (rule.endDate && now > new Date(rule.endDate)) return false;
+  if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
+    return rule.daysOfWeek.includes(now.getDay());
+  }
+  return true;
+}
+
+function applyModifierLine(
+  amount: number,
+  rule: { modifierType: string; modifierValue: number }
+): number {
+  if (rule.modifierType === MODIFIER_TYPE.PERCENTAGE) {
+    return amount - amount * (rule.modifierValue / 100);
+  }
+  return amount - rule.modifierValue;
+}
+
+function pickAppliedSpecialRule(rules: Record<string, unknown>[]) {
+  const sorted = [...rules]
+    .filter((r) => r.isActive !== false)
+    .sort(
+      (a: any, b: any) => (Number(b.priority ?? 0) - Number(a.priority ?? 0)) as number
+    );
+  return sorted.find(
+    (rule: any) =>
+      rule.type === PRICING_RULE_TYPE.SPECIAL &&
+      typeof rule.name === "string" &&
+      isRuleActiveForDate(rule)
+  ) as
+    | {
+        _id?: string;
+        name: string;
+        type: string;
+        modifierType: string;
+        modifierValue: number;
+        priority?: number;
+      }
+    | undefined;
+}
+
+function humanizePricingRuleType(type: string | undefined): string {
+  if (!type) return "";
+  return type
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
+}
+
+function formatRuleOfferLabel(rule: {
+  modifierType?: string;
+  modifierValue?: number;
+} | null): string {
+  if (!rule) return "";
+  const mv = Number(rule.modifierValue ?? 0);
+  if (rule.modifierType === MODIFIER_TYPE.PERCENTAGE) {
+    return `${mv}% off each line total (qty × unit price)`;
+  }
+  if (rule.modifierType === MODIFIER_TYPE.FIXED) {
+    return `${fmt(mv)} off each line total`;
+  }
+  return "";
+}
 
 const ORDER_STATUS_OPTIONS = Object.entries(POS_ORDER_STATUS).map(([k, v]) => ({
   value: v,
@@ -83,6 +159,16 @@ interface OrderItemRow {
   amount: number;
 }
 
+interface StockLineHint {
+  lineIndex: number;
+  menuItemId: string;
+  requestedQty: number;
+  maxQty: number | null;
+  limitingItemName: string | null;
+  availableQty: number | null;
+  unit: string | null;
+}
+
 const PAYMENT_METHOD_OPTIONS = Object.entries(PAYMENT_METHOD).map(([k, v]) => ({
   value: v,
   label: k
@@ -104,12 +190,23 @@ export default function OrdersPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [lastCapturedReceipt, setLastCapturedReceipt] = useState<any>(null);
 
+  const initialOrderRow = (): OrderItemRow => ({
+    menuItemId: "",
+    name: "",
+    quantity: 0,
+    unitPrice: 0,
+    amount: 0,
+  });
+
   const [form, setForm] = useState({
     tableId: "",
     addToRoomBill: false,
     roomId: "",
-    items: [{ menuItemId: "", name: "", quantity: 0, unitPrice: 0, amount: 0 }] as OrderItemRow[],
+    items: [initialOrderRow()] as OrderItemRow[],
   });
+  const [debouncedItems, setDebouncedItems] = useState<OrderItemRow[]>(() => [
+    initialOrderRow(),
+  ]);
   const [paymentForm, setPaymentForm] = useState({
     method: PAYMENT_METHOD.CASH,
     amountTendered: "",
@@ -134,6 +231,10 @@ export default function OrdersPage() {
     ...(department ? { department } : {}),
   });
   const { data: roomsData } = useRooms({ limit: "100" });
+  const { data: pricingRulesPayload } = usePricingRules(
+    department ? { department, limit: "100", page: "1" } : undefined,
+    { enabled: !!department }
+  );
   const createMut = useCreateOrder();
   const updateMut = useUpdateOrder();
   const deleteMut = useDeleteOrder();
@@ -155,6 +256,101 @@ export default function OrdersPage() {
   const menuMap = useMemo(
     () => Object.fromEntries(menuItems.map((m: any) => [String(m._id), m])),
     [menuItems]
+  );
+
+  const pricingRulesList = (pricingRulesPayload?.data ?? []) as Record<string, unknown>[];
+
+  const posOrderPricing = useMemo(() => {
+    const appliedRule = pickAppliedSpecialRule(pricingRulesList);
+    type LineRow = {
+      listLine: number;
+      preRuleLine: number;
+      finalLine: number;
+      listUnit: number;
+      overridden: boolean;
+    };
+    const perLine: (LineRow | null)[] = form.items.map((line) => {
+      if (!line.menuItemId || !line.quantity) return null;
+      const mi = menuMap[String(line.menuItemId)] as { price?: number } | undefined;
+      const listUnit = Number(mi?.price ?? 0);
+      const qty = Number(line.quantity);
+      const preRuleLine = Number((qty * Number(line.unitPrice)).toFixed(2));
+      const listLine = Number((qty * listUnit).toFixed(2));
+      const finalLine = appliedRule
+        ? Math.max(
+            0,
+            Number(
+              applyModifierLine(preRuleLine, {
+                modifierType: appliedRule.modifierType,
+                modifierValue: Number(appliedRule.modifierValue ?? 0),
+              }).toFixed(2)
+            )
+          )
+        : preRuleLine;
+      const overridden = Math.abs(Number(line.unitPrice) - listUnit) > 0.011;
+      return {
+        listLine,
+        preRuleLine,
+        finalLine,
+        listUnit,
+        overridden,
+      };
+    });
+
+    const listSubtotal = perLine.reduce((s, r) => s + (r?.listLine ?? 0), 0);
+    const preRuleSubtotal = perLine.reduce((s, r) => s + (r?.preRuleLine ?? 0), 0);
+    const finalSubtotal = perLine.reduce((s, r) => s + (r?.finalLine ?? 0), 0);
+    const savingsFromRule = Math.max(
+      0,
+      Number((preRuleSubtotal - finalSubtotal).toFixed(2))
+    );
+
+    return {
+      appliedRule: appliedRule ?? null,
+      perLine,
+      listSubtotal,
+      preRuleSubtotal,
+      finalSubtotal,
+      savingsFromRule,
+      hasLoadedRules: pricingRulesList.length > 0,
+    };
+  }, [form.items, menuMap, pricingRulesList]);
+
+  useEffect(() => {
+    if (!showModal) return;
+    const timer = setTimeout(() => setDebouncedItems(form.items), 350);
+    return () => clearTimeout(timer);
+  }, [form.items, showModal]);
+
+  const stockValidationQuery = useOrderStockValidation(
+    department,
+    debouncedItems.map((item, idx) => ({
+      lineIndex: idx,
+      menuItemId: item.menuItemId,
+      quantity: item.quantity,
+      name: item.name,
+    })),
+    showModal
+  );
+  const debouncedStockLineCount = useMemo(
+    () =>
+      debouncedItems.filter((line) => line.menuItemId && Number(line.quantity) > 0)
+        .length,
+    [debouncedItems]
+  );
+  const stockBlocksPlaceOrder =
+    showModal &&
+    debouncedStockLineCount > 0 &&
+    (stockValidationQuery.isFetching ||
+      stockValidationQuery.isError ||
+      stockValidationQuery.data?.ok === false);
+  const stockLineHints = useMemo(
+    () => (stockValidationQuery.data?.lineHints ?? []) as StockLineHint[],
+    [stockValidationQuery.data?.lineHints]
+  );
+  const stockHintByIndex = useMemo(
+    () => new Map(stockLineHints.map((hint) => [hint.lineIndex, hint])),
+    [stockLineHints]
   );
 
   const paymentPreview = useMemo(() => {
@@ -209,12 +405,14 @@ export default function OrdersPage() {
   }));
 
   const resetForm = () => {
+    const row = initialOrderRow();
     setForm({
       tableId: "",
       addToRoomBill: false,
       roomId: "",
-      items: [{ menuItemId: "", name: "", quantity: 0, unitPrice: 0, amount: 0 }],
+      items: [row],
     });
+    setDebouncedItems([row]);
   };
 
   const openPaymentModal = (order: any) => {
@@ -236,7 +434,7 @@ export default function OrdersPage() {
   const addItemRow = () => {
     setForm((f) => ({
       ...f,
-      items: [...f.items, { menuItemId: "", name: "", quantity: 0, unitPrice: 0, amount: 0 }],
+      items: [...f.items, initialOrderRow()],
     }));
   };
 
@@ -272,8 +470,9 @@ export default function OrdersPage() {
 
   const { subtotal, totalAmount } = useMemo(() => {
     const sub = form.items.reduce((s, i) => s + (i.amount || 0), 0);
-    return { subtotal: sub, totalAmount: sub };
-  }, [form.items]);
+    const charged = department ? posOrderPricing.finalSubtotal : sub;
+    return { subtotal: sub, totalAmount: charged };
+  }, [form.items, department, posOrderPricing.finalSubtotal]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -282,6 +481,14 @@ export default function OrdersPage() {
     );
     if (validItems.length === 0) {
       toast.error("Add at least one item");
+      return;
+    }
+    if (stockBlocksPlaceOrder) {
+      toast.error(
+        stockValidationQuery.data?.ok === false
+          ? stockValidationQuery.data.message ?? "Insufficient stock for this order"
+          : "Wait for stock validation to finish or fix the stock issue first"
+      );
       return;
     }
 
@@ -732,9 +939,32 @@ export default function OrdersPage() {
         size="xl"
       >
         <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="relative overflow-hidden rounded-2xl border border-[#5a189a]/20 bg-linear-to-br from-[#5a189a]/10 via-white to-[#ff6d00]/10 p-5 shadow-[0_8px_30px_rgba(90,24,154,0.12)]">
+            <div className="pointer-events-none absolute -top-10 -right-10 h-32 w-32 rounded-full bg-[#ff9e00]/25 blur-2xl" />
+            <div className="pointer-events-none absolute -bottom-12 -left-8 h-32 w-32 rounded-full bg-[#5a189a]/20 blur-2xl" />
+            <div className="relative flex items-start justify-between gap-4">
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#5a189a]">
+                  Premium order ticket
+                </p>
+                <h3 className="text-xl font-bold text-slate-900">Create Restaurant Order</h3>
+                <p className="text-sm text-slate-600">
+                  Build a polished order with table billing, live stock checks, and pricing rules.
+                </p>
+              </div>
+              <div className="hidden rounded-xl border border-white/70 bg-white/80 px-3 py-2 text-xs text-slate-600 shadow-sm sm:block">
+                <p className="font-medium text-slate-800">{form.items.length} line(s)</p>
+                <p>{fmt(totalAmount)} est. total</p>
+              </div>
+            </div>
+          </div>
+
           {/* Table & billing */}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/30 p-5">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-4">
+          <div className="rounded-2xl border border-[#5a189a]/15 bg-linear-to-r from-white to-[#5a189a]/[0.04] p-5 shadow-[0_4px_18px_rgba(15,23,42,0.06)]">
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[#5a189a]">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#5a189a]/12 text-[#5a189a]">
+                <FiMapPin className="h-4 w-4" />
+              </span>
               Table & billing
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -752,8 +982,8 @@ export default function OrdersPage() {
                 placeholder="Select table..."
                 className="w-full"
               />
-              <div className="flex flex-col justify-end gap-2">
-                <label className="flex items-center gap-2 cursor-pointer">
+              <div className="flex flex-col justify-end gap-2 rounded-xl border border-slate-200/80 bg-white p-3">
+                <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
                     checked={form.addToRoomBill}
@@ -785,54 +1015,129 @@ export default function OrdersPage() {
           </div>
 
           {/* Order items */}
-          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/50">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
-                Order items
-              </h3>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addItemRow}
-                className="rounded-lg border-[#5a189a]/40 text-[#5a189a] hover:bg-[#5a189a]/10 font-medium"
-              >
-                <FiPlus className="h-4 w-4 mr-1.5" />
-                Add item
-              </Button>
+          <div className="overflow-hidden rounded-3xl border border-[#ff6d00]/20 bg-white shadow-[0_16px_36px_rgba(255,109,0,0.12)]">
+            <div className="relative border-b border-[#ff6d00]/15 bg-linear-to-r from-[#fff5eb] via-[#fff8f2] to-[#f8f5ff] px-5 py-4">
+              <div className="pointer-events-none absolute -top-8 right-16 h-20 w-20 rounded-full bg-[#ff6d00]/15 blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-8 left-12 h-20 w-20 rounded-full bg-[#5a189a]/12 blur-2xl" />
+              <div className="relative flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[#c2410c]">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#ff6d00]/15 text-[#ff6d00]">
+                    <FiList className="h-4 w-4" />
+                  </span>
+                  Order items
+                </h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addItemRow}
+                  className="rounded-xl border-[#5a189a]/40 bg-white/95 font-semibold text-[#5a189a] shadow-sm hover:bg-[#5a189a]/10"
+                >
+                  <FiPlus className="mr-1.5 h-4 w-4" />
+                  Add item
+                </Button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/50">
-                    <th className="text-left py-3 px-4 font-semibold text-slate-600">Item</th>
-                    <th className="text-right py-3 px-4 font-semibold text-slate-600 w-20">Qty</th>
-                    <th className="text-right py-3 px-4 font-semibold text-slate-600 w-28">Unit price</th>
-                    <th className="text-right py-3 px-4 font-semibold text-slate-600 w-28">Amount</th>
+                  <tr className="border-b border-slate-100 bg-linear-to-r from-slate-50 to-orange-50/50">
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Item</th>
+                    <th className="w-20 px-4 py-3 text-right font-semibold text-slate-700">Qty</th>
+                    <th className="w-28 px-4 py-3 text-right font-semibold text-slate-700">Unit price</th>
+                    <th className="w-28 px-4 py-3 text-right font-semibold text-slate-700">Amount</th>
                     <th className="w-20 py-3 px-2" aria-label="Action" />
                   </tr>
                 </thead>
                 <tbody>
-                  {form.items.map((item, idx) => (
-                    <tr key={idx} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/50">
+                  {form.items.map((item, idx) => {
+                    const rowPb = posOrderPricing.perLine[idx];
+                    const rule = posOrderPricing.appliedRule;
+                    const rowStockHint = stockHintByIndex.get(idx);
+                    return (
+                    <tr key={idx} className="border-b border-slate-100 last:border-b-0 hover:bg-linear-to-r hover:from-[#fffaf5] hover:to-[#f8f5ff]/50">
                       <td className="py-2 px-4 align-middle">
-                        <AppReactSelect
-                          placeholder="Select item..."
-                          options={[{ value: "", label: "Select item..." }, ...menuOptions]}
-                          value={item.menuItemId}
-                          onChange={(v) => updateItemRow(idx, "menuItemId", v)}
-                          className="min-w-[200px]"
-                        />
+                        <div className="space-y-1">
+                          <AppReactSelect
+                            placeholder="Select item..."
+                            options={[{ value: "", label: "Select item..." }, ...menuOptions]}
+                            value={item.menuItemId}
+                            onChange={(v) => updateItemRow(idx, "menuItemId", v)}
+                            className="min-w-[200px]"
+                          />
+                          {item.menuItemId && rowPb && department ? (
+                            <div className="text-xs text-slate-600">
+                              {rowPb.overridden ? (
+                                <span className="text-amber-800">
+                                  Unit price differs from menu list ({fmt(rowPb.listUnit)}).
+                                </span>
+                              ) : rule ? (
+                                <div className="rounded-md border border-emerald-200/80 bg-emerald-50/80 px-2 py-1.5 text-left text-emerald-950">
+                                  <p className="font-semibold text-emerald-900">
+                                    {rule.name}
+                                    <span className="font-normal text-emerald-800">
+                                      {" "}
+                                      · {humanizePricingRuleType(rule.type)}
+                                    </span>
+                                  </p>
+                                  <p className="mt-0.5 text-emerald-800">
+                                    {formatRuleOfferLabel(rule)}
+                                  </p>
+                                  <p className="mt-1 tabular-nums text-emerald-900/90">
+                                    Line before rule {fmt(rowPb.preRuleLine)} → after{" "}
+                                    <span className="font-semibold">{fmt(rowPb.finalLine)}</span>
+                                  </p>
+                                </div>
+                              ) : posOrderPricing.hasLoadedRules ? (
+                                <span>
+                                  No active &quot;special&quot; rule for this date (see{" "}
+                                  <Link
+                                    href={
+                                      department === "restaurant"
+                                        ? "/restaurant/pricing-rules"
+                                        : `/pricing-rules?department=${encodeURIComponent(department)}`
+                                    }
+                                    className="font-medium text-[#5a189a] underline"
+                                  >
+                                    Pricing rules
+                                  </Link>
+                                  ).
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="py-2 px-4 text-right align-middle">
                         <Input
                           type="number"
                           min="0"
+                          max={rowStockHint?.maxQty != null ? String(rowStockHint.maxQty) : undefined}
                           value={item.quantity}
                           onChange={(e) => updateItemRow(idx, "quantity", e.target.value)}
                           placeholder="0"
-                          className="w-full max-w-[5rem] rounded-lg border-slate-200 text-right inline-block"
+                          className="inline-block w-full max-w-20 rounded-lg border-slate-300 bg-white px-2.5 py-2 text-right text-base font-semibold tabular-nums text-slate-900 placeholder:text-slate-400"
                         />
+                        {rowStockHint?.maxQty != null ? (
+                          <p className="mt-1 text-[11px] leading-tight text-slate-500">
+                            Max now:{" "}
+                            <span className="font-semibold tabular-nums">{rowStockHint.maxQty}</span>
+                            {rowStockHint.limitingItemName ? (
+                              <>
+                                {" "}
+                                (limited by {rowStockHint.limitingItemName}
+                                {rowStockHint.availableQty != null ? (
+                                  <>
+                                    {" "}
+                                    {rowStockHint.availableQty}
+                                    {rowStockHint.unit ? ` ${rowStockHint.unit}` : ""}
+                                  </>
+                                ) : null}
+                                )
+                              </>
+                            ) : null}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="py-2 px-4 text-right align-middle">
                         <Input
@@ -846,7 +1151,11 @@ export default function OrdersPage() {
                         />
                       </td>
                       <td className="py-2 px-4 text-right font-medium text-slate-800 align-middle whitespace-nowrap">
-                        {fmt(item.amount || 0)}
+                        {fmt(
+                          department && rowPb
+                            ? rowPb.finalLine
+                            : item.amount || 0
+                        )}
                       </td>
                       <td className="py-2 px-2 align-middle">
                         <Button
@@ -862,28 +1171,132 @@ export default function OrdersPage() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* Order total */}
-          <div className="rounded-2xl border-2 border-[#5a189a]/20 bg-gradient-to-br from-[#5a189a]/05 to-white p-5">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Subtotal</p>
-                <p className="text-lg font-semibold text-slate-800">{fmt(subtotal)}</p>
-              </div>
-              <div className="h-8 w-px bg-slate-200 hidden sm:block" />
-              <div className="text-right">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Total</p>
-                <p className="text-2xl font-bold text-[#5a189a]">{fmt(totalAmount)}</p>
-              </div>
+          {showModal && debouncedStockLineCount > 0 ? (
+            <div className="space-y-2" role="status" aria-live="polite">
+              {stockValidationQuery.isFetching ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Checking available stock for this cart...
+                </div>
+              ) : stockValidationQuery.isError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                  Could not verify stock right now. Check your connection and try again.
+                </div>
+              ) : stockValidationQuery.data?.ok === false ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                  <p className="font-semibold">Insufficient stock for this order</p>
+                  <p className="mt-1">{stockValidationQuery.data.message}</p>
+                </div>
+              ) : stockValidationQuery.data?.ok === true ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  Stock covers this order. You can place it.
+                </div>
+              ) : null}
             </div>
+          ) : null}
+
+          {/* Order total & pricing rules (matches server `resolveBarOrderPricing`) */}
+          <div className="rounded-3xl border border-[#5a189a]/25 bg-linear-to-br from-[#f7f1ff] via-white to-[#fff6ec] p-5 shadow-[0_14px_30px_rgba(90,24,154,0.12)]">
+            {department ? (
+              <>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#5a189a]">
+                  Pricing summary
+                </p>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-4 rounded-xl border border-slate-200/70 bg-white/85 px-3 py-2 text-slate-700">
+                    <span>List subtotal (menu list × qty)</span>
+                    <span className="font-medium tabular-nums">
+                      {fmt(posOrderPricing.listSubtotal)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 rounded-xl border border-slate-200/70 bg-white/85 px-3 py-2 text-slate-700">
+                    <span>Subtotal (qty × unit price)</span>
+                    <span className="font-medium tabular-nums">
+                      {fmt(posOrderPricing.preRuleSubtotal)}
+                    </span>
+                  </div>
+                  {posOrderPricing.appliedRule ? (
+                    <>
+                      <div className="flex justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-emerald-800">
+                        <span>
+                          Rule: {posOrderPricing.appliedRule.name} (
+                          {humanizePricingRuleType(posOrderPricing.appliedRule.type)})
+                        </span>
+                        <span className="font-semibold tabular-nums">
+                          {posOrderPricing.appliedRule.modifierType === MODIFIER_TYPE.PERCENTAGE
+                            ? `${posOrderPricing.appliedRule.modifierValue}% off each line`
+                            : `${fmt(posOrderPricing.appliedRule.modifierValue)} off each line`}
+                        </span>
+                      </div>
+                      <p className="rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-xs text-slate-600">
+                        {formatRuleOfferLabel(posOrderPricing.appliedRule)}
+                      </p>
+                    </>
+                  ) : null}
+                  {posOrderPricing.savingsFromRule > 0 ? (
+                    <div className="flex justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-emerald-800">
+                      <span>Savings from rule</span>
+                      <span className="font-semibold tabular-nums">
+                        −{fmt(posOrderPricing.savingsFromRule)}
+                      </span>
+                    </div>
+                  ) : null}
+                  {!posOrderPricing.appliedRule &&
+                  posOrderPricing.hasLoadedRules &&
+                  posOrderPricing.preRuleSubtotal > 0 ? (
+                    <p className="text-xs text-slate-500">
+                      No active <code className="rounded bg-slate-100 px-1">special</code> rule
+                      applies today. Create one under{" "}
+                      <Link
+                        href={
+                          department === "restaurant"
+                            ? "/restaurant/pricing-rules"
+                            : `/pricing-rules?department=${encodeURIComponent(department)}`
+                        }
+                        className="font-medium text-[#5a189a] underline"
+                      >
+                        Pricing rules
+                      </Link>{" "}
+                      (type &quot;Special&quot;).
+                    </p>
+                  ) : null}
+                  {!posOrderPricing.hasLoadedRules ? (
+                    <p className="text-xs text-slate-500">
+                      No pricing rules loaded for this department.
+                    </p>
+                  ) : null}
+                  <div className="mt-2 flex justify-between gap-4 rounded-2xl border border-[#5a189a]/25 bg-linear-to-r from-[#5a189a]/8 to-[#ff6d00]/8 px-4 py-3 text-base font-bold text-[#5a189a]">
+                    <span>Total to pay</span>
+                    <span className="tabular-nums">{fmt(totalAmount)}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Subtotal
+                  </p>
+                  <p className="text-lg font-semibold text-slate-800">{fmt(subtotal)}</p>
+                </div>
+                <div className="hidden h-8 w-px bg-slate-200 sm:block" />
+                <div className="text-right">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Total
+                  </p>
+                  <p className="text-2xl font-bold text-[#5a189a]">{fmt(totalAmount)}</p>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2 border-t border-slate-100">
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-2">
             <Button
               type="button"
               variant="outline"
@@ -891,14 +1304,20 @@ export default function OrdersPage() {
                 setShowModal(false);
                 resetForm();
               }}
-              className="rounded-xl border-slate-200"
+              className="rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
             >
               Cancel
             </Button>
             <Button
               type="submit"
               loading={createMut.isPending}
-              className="rounded-xl font-semibold text-white border-0 shadow-lg shadow-[#ff6d00]/25 bg-gradient-to-r from-[#ff6d00] to-[#ff8500] hover:from-[#ff7900] hover:to-[#ff9e00] focus:ring-2 focus:ring-[#ff6d00] focus:ring-offset-2"
+              disabled={stockBlocksPlaceOrder}
+              title={
+                stockBlocksPlaceOrder
+                  ? "Resolve stock issues or wait for validation to complete"
+                  : undefined
+              }
+              className="rounded-xl border-0 bg-linear-to-r from-[#ff6d00] via-[#ff8a00] to-[#ff9e00] font-semibold text-white shadow-lg shadow-[#ff6d00]/30 hover:from-[#ff7900] hover:via-[#ff9300] hover:to-[#ffad33] focus:ring-2 focus:ring-[#ff6d00] focus:ring-offset-2"
             >
               Create Order
             </Button>

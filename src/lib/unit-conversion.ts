@@ -90,18 +90,41 @@ export function buildYieldMap(
   const map = new Map<string, YieldMapping[]>();
   for (const y of yieldDocs) {
     const itemId = String(
-      typeof y.inventoryItemId === "object"
-        ? y.inventoryItemId._id ?? y.inventoryItemId
-        : y.inventoryItemId
+      typeof y.inventoryItemId === "object" && y.inventoryItemId?._id
+        ? y.inventoryItemId._id
+        : y.inventoryItemId ?? ""
     );
+    if (!itemId) continue;
+
+    const fromUnitId = String(
+      typeof y.fromUnitId === "object" && y.fromUnitId?._id
+        ? y.fromUnitId._id
+        : y.fromUnitId ?? ""
+    );
+    const fromUnitName = normalizeUnit(
+      typeof y.fromUnitId === "object" && y.fromUnitId?.name
+        ? String(y.fromUnitId.name)
+        : ""
+    );
+    const toUnitId = String(
+      typeof y.toUnitId === "object" && y.toUnitId?._id
+        ? y.toUnitId._id
+        : y.toUnitId ?? ""
+    );
+    const toUnitName = normalizeUnit(
+      typeof y.toUnitId === "object" && y.toUnitId?.name
+        ? String(y.toUnitId.name)
+        : ""
+    );
+
     const entry: YieldMapping = {
       inventoryItemId: itemId,
-      fromUnitId: String(typeof y.fromUnitId === "object" ? y.fromUnitId._id : y.fromUnitId),
-      fromUnitName: normalizeUnit(typeof y.fromUnitId === "object" ? y.fromUnitId.name : ""),
+      fromUnitId,
+      fromUnitName,
       fromQty: Number(y.fromQty) || 1,
       baseUnitQty: y.baseUnitQty != null ? Number(y.baseUnitQty) : undefined,
-      toUnitId: String(typeof y.toUnitId === "object" ? y.toUnitId._id : y.toUnitId),
-      toUnitName: normalizeUnit(typeof y.toUnitId === "object" ? y.toUnitId.name : ""),
+      toUnitId,
+      toUnitName,
       toQty: Number(y.toQty) || 0,
     };
     if (!map.has(itemId)) map.set(itemId, []);
@@ -177,6 +200,48 @@ export function convertChefQtyToBaseQty(input: {
   if (match.baseUnitQty != null && match.baseUnitQty > 0) {
     const basePerYieldUnit = match.baseUnitQty / match.toQty;
     return Number((input.chefQty * basePerYieldUnit).toFixed(6));
+  }
+
+  return null;
+}
+
+/**
+ * Inverse of {@link convertChefQtyToBaseQty}: how many yield/chef units the current
+ * base-unit stock represents (e.g. kg → serves) using the same ItemYield row.
+ */
+export function convertBaseQtyToChefYieldQty(input: {
+  baseQuantity: number;
+  item: ItemWithUnitConversions;
+  yieldRow: {
+    fromQty: number;
+    toQty: number;
+    baseUnitQty?: number;
+    /** RestaurantUnit `name` for fromUnit — must match convertChefQtyToBaseQty matching */
+    fromUnitName: string;
+  };
+}): number | null {
+  const baseQty = Number(input.baseQuantity);
+  if (!Number.isFinite(baseQty)) return null;
+
+  const baseUnit = normalizeUnit(input.item.unit);
+  const fromN = normalizeUnit(input.yieldRow.fromUnitName);
+  const fromQty = Number(input.yieldRow.fromQty) || 1;
+  const toQty = Number(input.yieldRow.toQty) || 0;
+  if (toQty <= 0) return null;
+
+  // Path 1: fromUnit IS the inventory base unit
+  if (fromN === baseUnit) {
+    const ratio = fromQty / toQty;
+    if (ratio <= 0) return null;
+    return Number((baseQty / ratio).toFixed(4));
+  }
+
+  // Path 2: baseUnitQty on mapping (e.g. 1 bag = 25 kg → 50 plates)
+  const bu = input.yieldRow.baseUnitQty;
+  if (bu != null && bu > 0) {
+    const basePerYieldUnit = bu / toQty;
+    if (basePerYieldUnit <= 0) return null;
+    return Number((baseQty / basePerYieldUnit).toFixed(4));
   }
 
   return null;

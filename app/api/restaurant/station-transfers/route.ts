@@ -11,6 +11,7 @@ import {
 } from "@/lib/department-movement";
 import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
 import { createStationTransferSchema } from "@/validations/restaurant";
+import { stationTransferDebug } from "@/lib/station-transfer-debug";
 
 const SORT_FIELDS = ["transferDate", "createdAt", "status"];
 
@@ -75,6 +76,20 @@ export const POST = withHandler(
     const body = await req.json();
     const data = createStationTransferSchema.parse(body);
 
+    stationTransferDebug("POST:create:incoming", {
+      department,
+      fromLocation: data.fromLocation,
+      toLocation: data.toLocation,
+      lineCount: data.lines.length,
+      linesPreview: data.lines.map((l) => ({
+        inventoryItemId: l.inventoryItemId,
+        itemName: l.itemName,
+        quantity: l.quantity,
+        unit: l.unit,
+      })),
+      note: "Creates PENDING transfer only — mainStore currentStock changes on PATCH complete, not here",
+    });
+
     const doc = await StationTransferModel.create({
       tenantId,
       branchId,
@@ -96,6 +111,14 @@ export const POST = withHandler(
       notes: data.notes,
       createdBy: auth.userId,
     } as any);
+
+    stationTransferDebug("POST:create:stored", {
+      _id: String(doc._id),
+      transferNumber: doc.transferNumber,
+      status: doc.status,
+      fromLocation: doc.fromLocation,
+      toLocation: doc.toLocation,
+    });
 
     await ActivityLog.create({
       tenantId,

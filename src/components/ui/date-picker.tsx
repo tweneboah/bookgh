@@ -18,6 +18,10 @@ interface AppDatePickerProps {
   minDate?: Date;
   /** Maximum selectable date */
   maxDate?: Date;
+  /** Override default date display format (date-only mode). */
+  dateFormat?: string;
+  /** Full class string for the date input (overrides default input styling when set). */
+  inputClassName?: string;
 }
 
 export function AppDatePicker({
@@ -32,6 +36,8 @@ export function AppDatePicker({
   error,
   minDate,
   maxDate,
+  dateFormat: dateFormatProp,
+  inputClassName,
 }: AppDatePickerProps) {
   const id = useId();
   return (
@@ -48,12 +54,17 @@ export function AppDatePicker({
         showTimeSelect={showTimeSelect}
         timeIntervals={showTimeSelect ? timeIntervals : undefined}
         timeCaption="Time"
-        dateFormat={showTimeSelect ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd"}
-        className={`h-10 w-full rounded-xl border bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 ${
-          error
-            ? "border-red-500 focus:border-red-500 focus:ring-red-500/20"
-            : "border-slate-200 focus:border-[#5a189a] focus:ring-[#5a189a]/20"
-        }`}
+        dateFormat={
+          showTimeSelect ? "yyyy-MM-dd HH:mm" : dateFormatProp ?? "yyyy-MM-dd"
+        }
+        className={
+          inputClassName ??
+          `h-10 w-full rounded-xl border bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 ${
+            error
+              ? "border-red-500 focus:border-red-500 focus:ring-red-500/20"
+              : "border-slate-200 focus:border-[#5a189a] focus:ring-[#5a189a]/20"
+          }`
+        }
         placeholderText={placeholderText ?? placeholder}
         minDate={minDate}
         maxDate={maxDate}

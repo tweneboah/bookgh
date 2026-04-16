@@ -10,10 +10,13 @@ import {
   useInventoryItems,
   useRestaurantUnits,
   useItemYields,
+  useLocationStock,
 } from "@/hooks/api";
 import { Button, Modal, Input, Textarea, AppReactSelect } from "@/components/ui";
 import { IoAdd, IoPencil, IoTrash, IoBookOutline, IoSearch } from "react-icons/io5";
 import toast from "react-hot-toast";
+import { convertBaseQtyToChefYieldQty, buildYieldMap, convertChefQtyToBaseQty } from "@/lib/unit-conversion";
+import { formatDisplayQuantity } from "@/lib/format-display-qty";
 
 type IngredientRow = {
   inventoryItemId: string;
@@ -67,6 +70,74 @@ export default function RestaurantRecipesPage() {
 
   const { data: yieldsRaw } = useItemYields({ limit: "1000" });
   const yieldMappings: any[] = Array.isArray(yieldsRaw) ? yieldsRaw : (yieldsRaw as any)?.data ?? [];
+
+  const { data: locationData } = useLocationStock({ department: "restaurant" });
+  const kitchenStock = (locationData?.data as { kitchen?: unknown[] } | undefined)?.kitchen ?? [];
+  const kitchenQtyByItemId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const row of kitchenStock) {
+      const r = row as { inventoryItemId?: string; quantity?: number };
+      const id = String(r.inventoryItemId ?? "");
+      if (!id) continue;
+      m.set(id, Number(r.quantity ?? 0));
+    }
+    return m;
+  }, [kitchenStock]);
+
+  const yieldMapForKitchen = useMemo(() => buildYieldMap(yieldMappings), [yieldMappings]);
+
+  const getChefUnitLabel = (chefUnitId: string) => {
+    if (!chefUnitId) return "";
+    const unit = chefUnits.find((u: any) => String(u._id) === String(chefUnitId));
+    return String(unit?.abbreviation ?? unit?.name ?? "").trim();
+  };
+
+  const getYieldFromUnitName = (yieldRow: any) => {
+    if (typeof yieldRow?.fromUnitId === "object" && yieldRow?.fromUnitId?.name) {
+      return String(yieldRow.fromUnitId.name);
+    }
+    const fromId = String(yieldRow?.fromUnitId?._id ?? yieldRow?.fromUnitId ?? "");
+    if (!fromId) return "";
+    const found = chefUnits.find((u: any) => String(u._id) === fromId);
+    return String(found?.name ?? found?.abbreviation ?? "");
+  };
+
+  const getYieldToUnitLabel = (yieldRow: any) => {
+    const to = yieldRow?.toUnitId;
+    if (typeof to === "object") {
+      const label = String(to?.abbreviation ?? to?.name ?? "").trim();
+      if (label) return label;
+      const toObjId = String(to?._id ?? "");
+      if (toObjId) return getChefUnitLabel(toObjId);
+    }
+    return getChefUnitLabel(String(to ?? ""));
+  };
+
+  const getChefEquivalentsForBaseQty = (inv: any, baseQty: number): { label: string; qty: number }[] => {
+    const itemId = String(inv?._id ?? "");
+    if (!itemId || !Number.isFinite(baseQty)) return [];
+    const rows = yieldMappings.filter(
+      (y: any) => String(y.inventoryItemId?._id ?? y.inventoryItemId) === itemId
+    );
+    const out: { label: string; qty: number }[] = [];
+    for (const y of rows) {
+      const qty = convertBaseQtyToChefYieldQty({
+        baseQuantity: Number(baseQty),
+        item: inv,
+        yieldRow: {
+          fromQty: Number(y?.fromQty || 1),
+          toQty: Number(y?.toQty || 1),
+          baseUnitQty: Number(y?.baseUnitQty ?? 0) > 0 ? Number(y?.baseUnitQty) : undefined,
+          fromUnitName: getYieldFromUnitName(y),
+        },
+      });
+      const label = getYieldToUnitLabel(y);
+      if (qty != null && Number.isFinite(qty) && qty >= 0 && label) {
+        out.push({ label, qty });
+      }
+    }
+    return out;
+  };
 
   const estimateChefCost = (inventoryItemId: string, chefUnitId: string, chefQty: number) => {
     if (!inventoryItemId || !chefUnitId || !chefQty) return null;
@@ -209,6 +280,33 @@ export default function RestaurantRecipesPage() {
     if (form.overheadCost !== "" && (!Number.isFinite(overheadCost) || overheadCost < 0)) {
       toast.error("Overhead cost must be zero or greater");
       return;
+    }
+    if (!editItem) {
+      for (const row of validIngredientRows) {
+        const inv = inventoryItems.find((item: any) => String(item._id) === String(row.inventoryItemId));
+        if (!inv) continue;
+        const chefQty = Number(row.chefQty || 0);
+        const needed = convertChefQtyToBaseQty({
+          inventoryItemId: row.inventoryItemId,
+          chefQty,
+          chefUnitIdOrName: row.chefUnitId,
+          item: inv,
+          yieldMap: yieldMapForKitchen,
+        });
+        if (needed == null) {
+          toast.error(
+            `No yield mapping from chef unit to base unit for ${inv.name}. Configure yields or pick another unit.`
+          );
+          return;
+        }
+        const avail = kitchenQtyByItemId.get(String(row.inventoryItemId)) ?? 0;
+        if (needed > avail + 0.0001) {
+          toast.error(
+            `Insufficient kitchen stock for ${inv.name}: need ${formatDisplayQuantity(needed, 4)} ${inv.unit} at the kitchen; have ${formatDisplayQuantity(avail, 4)}. Use Movement Flow to move stock to the kitchen first.`
+          );
+          return;
+        }
+      }
     }
     const productionMins = form.productionTimeMinutes === "" ? null : Number(form.productionTimeMinutes);
     if (productionMins !== null && (!Number.isFinite(productionMins) || productionMins < 0)) {
@@ -545,8 +643,11 @@ export default function RestaurantRecipesPage() {
           </div>
 
           <div className="rounded-xl border border-[#e5e7eb] bg-[#fafafa] p-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm font-semibold text-[#374151]">Ingredients</span>
+              <p className="text-xs text-[#6b7280]">
+                Recipe prep deducts from <strong className="text-[#374151]">kitchen</strong> stock (same as Movement Flow). POS main-store stock is shown for reference only.
+              </p>
               <Button
                 type="button"
                 variant="outline"
@@ -587,9 +688,39 @@ export default function RestaurantRecipesPage() {
                   ? chefUnitOptions.filter((o) => relevantUnitIds.has(o.value))
                   : chefUnitOptions;
 
-                const purchaseUnitName = inv?.purchaseUnitId?.name ?? inv?.purchaseUnitId?.abbreviation ?? null;
-                const yieldUnitName = inv?.yieldUnitId?.name ?? inv?.yieldUnitId?.abbreviation ?? null;
-                const yieldPerPurchase = inv?.yieldPerPurchaseUnit ?? null;
+                const kitchenBaseQty = inv
+                  ? kitchenQtyByItemId.get(String(ingredient.inventoryItemId)) ?? 0
+                  : 0;
+                const kitchenChefEquivalents = inv
+                  ? getChefEquivalentsForBaseQty(inv, kitchenBaseQty)
+                  : [];
+
+                const mainStoreChefEquivalents = inv
+                  ? getChefEquivalentsForBaseQty(inv, Number(inv.currentStock ?? 0))
+                  : [];
+                const chefUnitList = Array.from(
+                  new Set(mainStoreChefEquivalents.map((e) => e.label).filter(Boolean))
+                ).join(" · ");
+                const mainStoreStockWithYield = inv
+                  ? mainStoreChefEquivalents.length > 0
+                    ? `${formatDisplayQuantity(Number(inv.currentStock ?? 0), 1)} ${inv.unit} (${mainStoreChefEquivalents
+                        .map((e) => `≈ ${formatDisplayQuantity(e.qty, 1)} ${e.label}`)
+                        .join(" · ")})`
+                    : `${formatDisplayQuantity(Number(inv.currentStock ?? 0), 1)} ${inv.unit} (no chef/yield units)`
+                  : "—";
+
+                const neededBase =
+                  inv && ingredient.chefUnitId && chefQtyNum > 0
+                    ? convertChefQtyToBaseQty({
+                        inventoryItemId: ingredient.inventoryItemId,
+                        chefQty: chefQtyNum,
+                        chefUnitIdOrName: ingredient.chefUnitId,
+                        item: inv,
+                        yieldMap: yieldMapForKitchen,
+                      })
+                    : null;
+                const kitchenShort =
+                  neededBase != null && neededBase > kitchenBaseQty + 0.0001;
 
                 return (
                   <div
@@ -677,67 +808,65 @@ export default function RestaurantRecipesPage() {
                     </div>
 
                     {inv && (
+                      <div
+                        className={`mt-2 rounded-xl border px-3 py-2.5 sm:px-4 ${
+                          kitchenShort && !editItem
+                            ? "border-red-200 bg-red-50/90"
+                            : kitchenBaseQty <= 0
+                              ? "border-amber-200 bg-amber-50/80"
+                              : "border-[#7b2cbf]/25 bg-[#faf5ff]/90"
+                        }`}
+                      >
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-[#5a189a]">
+                          Available in kitchen
+                        </p>
+                        <p className="mt-1 text-lg font-semibold tabular-nums text-[#111827]">
+                          {formatDisplayQuantity(kitchenBaseQty, 2)}{" "}
+                          <span className="text-sm font-medium text-[#6b7280]">{inv.unit ?? "unit"}</span>
+                        </p>
+                        {kitchenChefEquivalents.length > 0 && (
+                          <p className="mt-1 text-xs text-[#6b7280]">
+                            ≈{" "}
+                            {kitchenChefEquivalents
+                              .map((e) => `${formatDisplayQuantity(e.qty, 2)} ${e.label}`)
+                              .join(" · ")}
+                          </p>
+                        )}
+                        {kitchenBaseQty <= 0 && (
+                          <p className="mt-1.5 text-xs text-amber-900">
+                            Nothing in kitchen for this item yet. Move stock from main store on Movement Flow.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {inv && (
                       <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-dashed border-[#d1d5db] bg-[#f9fafb] px-3 py-2 text-xs text-[#6b7280]">
                         <span>
                           Base unit: <strong className="text-[#374151]">{inv.unit ?? "—"}</strong>
+                          {chefUnitList ? ` (${chefUnitList})` : " (no chef/yield units)"}
                         </span>
                         <span className="hidden sm:inline text-[#d1d5db]">|</span>
                         <span>
-                          Unit cost: <strong className="text-[#374151]">{fmt(Number(inv.unitCost ?? 0))}/{inv.unit ?? "unit"}</strong>
+                          Cost per {inv.unit ?? "unit"}
+                          {chefUnitList ? ` (${chefUnitList})` : " (no chef/yield units)"}:{" "}
+                          <strong className="text-[#374151]">{fmt(Number(inv.unitCost ?? 0))}</strong>
                         </span>
                         <span className="hidden sm:inline text-[#d1d5db]">|</span>
                         <span>
-                          In stock:{" "}
-                          <strong className={Number(inv.currentStock ?? 0) <= Number(inv.minimumStock ?? 0) ? "text-[#dc2626]" : "text-[#059669]"}>
-                            {Number(inv.currentStock ?? 0).toLocaleString()} {inv.unit}
+                          Main store (POS):{" "}
+                          <strong className={Number(inv.currentStock ?? 0) <= Number(inv.minimumStock ?? 0) ? "text-[#dc2626]" : "text-[#6b7280]"}>
+                            {mainStoreStockWithYield}
                           </strong>
                         </span>
-                        {purchaseUnitName && yieldUnitName && yieldPerPurchase != null && (
-                          <>
-                            <span className="hidden sm:inline text-[#d1d5db]">|</span>
-                            <span>
-                              Yield: <strong className="text-[#7b2cbf]">1 {purchaseUnitName} → {yieldPerPurchase} {yieldUnitName}s</strong>
-                            </span>
-                          </>
-                        )}
-                        {itemYields.length > 0 && (
-                          <>
-                            <span className="hidden sm:inline text-[#d1d5db]">|</span>
-                            <span className="text-[#5a189a]">
-                              {itemYields.map((y: any, yIdx: number) => {
-                                const fromName = y.fromUnitId?.abbreviation ?? y.fromUnitId?.name ?? "?";
-                                const toName = y.toUnitId?.abbreviation ?? y.toUnitId?.name ?? "?";
-                                const baseQtyVal = Number(y.baseUnitQty || 0);
-                                const toQty = Number(y.toQty || 1);
-                                const baseUnitCost = Number(inv.unitCost || 0);
-                                const perYieldCost =
-                                  baseQtyVal > 0 && toQty > 0
-                                    ? (baseUnitCost * baseQtyVal) / toQty
-                                    : null;
-                                return (
-                                  <span key={yIdx} className="inline-flex items-center gap-1">
-                                    {yIdx > 0 && " · "}
-                                    <strong>{y.fromQty} {fromName}</strong>
-                                    {baseQtyVal > 0 && (
-                                      <span className="text-slate-400 font-normal">({baseQtyVal} {inv.unit})</span>
-                                    )}
-                                    <strong> → {y.toQty} {toName}</strong>
-                                    {perYieldCost != null ? (
-                                      <span className="rounded bg-[#f5f3ff] px-1.5 py-0.5 text-[10px] font-semibold text-[#5a189a]">
-                                        {fmt(Math.round(perYieldCost * 100) / 100)}/{toName}
-                                      </span>
-                                    ) : (
-                                      <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
-                                        Missing base unit equivalent
-                                      </span>
-                                    )}
-                                  </span>
-                                );
-                              })}
-                            </span>
-                          </>
-                        )}
                       </div>
+                    )}
+                    {inv && kitchenShort && (
+                      <p className="mt-2 text-xs text-[#b45309]">
+                        {editItem
+                          ? "If this line needs more than the kitchen row shows, the server returns previous recipe usage first—save may still succeed."
+                          : "This line needs more base quantity than is in the kitchen. Transfer stock on Movement Flow or reduce quantities."}
+                      </p>
                     )}
                   </div>
                 );

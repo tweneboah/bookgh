@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import {
   useProductionBatches,
   useCreateProductionBatch,
@@ -160,6 +160,60 @@ export default function ProductionBatchesPage() {
   const restaurantUnits = unitsData?.data ?? [];
   const selectedRecipe = recipes.find((r: any) => r._id === form.recipeId);
 
+  const yieldByItem = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const y of yieldMappings) {
+      const itemId = String(
+        typeof y.inventoryItemId === "object"
+          ? y.inventoryItemId?._id ?? y.inventoryItemId
+          : y.inventoryItemId
+      );
+      if (!m.has(itemId)) m.set(itemId, []);
+      m.get(itemId)!.push(y);
+    }
+    return m;
+  }, [yieldMappings]);
+
+  const formatChefUnitName = (unitObj: any, qty: number) => {
+    const raw = String(unitObj?.name ?? unitObj?.abbreviation ?? "unit").trim();
+    if (!raw) return "unit";
+    if (qty === 1 || raw.endsWith("s")) return raw;
+    return `${raw}s`;
+  };
+
+  /** Same logic as Purchase Orders — baseQty in inventory base unit (kg, L, …). */
+  const chefReadableText = (inventoryItemId: string, baseQty: number) => {
+    const mappings = yieldByItem.get(inventoryItemId) ?? [];
+    const first = mappings.find(
+      (y: any) => Number(y.baseUnitQty ?? 0) > 0 && Number(y.toQty ?? 0) > 0
+    );
+    if (!first) return null;
+    const baseUnitQty = Number(first.baseUnitQty);
+    const fromQty = Number(first.fromQty ?? 0);
+    const toQty = Number(first.toQty ?? 0);
+    if (baseUnitQty <= 0 || fromQty <= 0 || toQty <= 0) return null;
+    const purchaseQty = (baseQty / baseUnitQty) * fromQty;
+    const chefQty = (baseQty / baseUnitQty) * toQty;
+    const purchaseName = formatChefUnitName(first.fromUnitId, purchaseQty);
+    const chefName = formatChefUnitName(first.toUnitId, chefQty);
+    return `${purchaseQty.toFixed(2)} ${purchaseName} / ${chefQty.toFixed(1)} ${chefName}`;
+  };
+
+  const chefFormulaText = (inventoryItemId: string) => {
+    const mappings = yieldByItem.get(inventoryItemId) ?? [];
+    const first = mappings.find(
+      (y: any) => Number(y.baseUnitQty ?? 0) > 0 && Number(y.toQty ?? 0) > 0
+    );
+    if (!first) return null;
+    const baseUnitQty = Number(first.baseUnitQty);
+    const fromQty = Number(first.fromQty ?? 0);
+    const toQty = Number(first.toQty ?? 0);
+    if (baseUnitQty <= 0 || fromQty <= 0 || toQty <= 0) return null;
+    const fromUnit = formatChefUnitName(first.fromUnitId, fromQty);
+    const toUnit = formatChefUnitName(first.toUnitId, toQty);
+    return `${baseUnitQty} base → ${fromQty} ${fromUnit} / ${toQty} ${toUnit}`;
+  };
+
   const getUnitLabel = (unitValue: string) => {
     const u = restaurantUnits.find((x: any) => String(x._id) === String(unitValue));
     if (!u) return unitValue;
@@ -181,6 +235,23 @@ export default function ProductionBatchesPage() {
     if (!(baseUnitQty > 0) || !(toQty > 0)) return null;
     const costPerYieldUnit = (baseUnitCost * baseUnitQty) / toQty;
     return Math.round(costPerYieldUnit * 100) / 100;
+  };
+
+  /** Label for output unit (matches PO-style readable names). */
+  const getOutputUnitDisplayLabel = () => {
+    const inv = form.outputInventoryItemId
+      ? inventoryItems.find((i: any) => String(i._id) === String(form.outputInventoryItemId))
+      : null;
+    const raw = form.outputInventoryItemId
+      ? String(form.outputUnit || inv?.unit || "unit")
+      : String(form.outputUnit || "unit");
+    const byId = restaurantUnits.find((u: any) => String(u._id) === String(raw));
+    if (byId) return byId.abbreviation ? `${byId.name} (${byId.abbreviation})` : byId.name;
+    const byName = restaurantUnits.find(
+      (u: any) => String(u.name).toLowerCase() === raw.trim().toLowerCase()
+    );
+    if (byName) return byName.abbreviation ? `${byName.name} (${byName.abbreviation})` : byName.name;
+    return raw;
   };
 
   const getBaseEquivalentQty = (
@@ -698,6 +769,82 @@ export default function ProductionBatchesPage() {
                     </select>
                   )}
                 </div>
+
+                {(() => {
+                  const qty = Number(form.quantityProduced || 0);
+                  const name = (form.outputItemName || "").trim() || "—";
+                  const unitLabel = getOutputUnitDisplayLabel();
+                  const totalBatch = actualInputCost;
+                  const perUnit = qty > 0 ? totalBatch / qty : 0;
+                  const outInvId = form.outputInventoryItemId
+                    ? String(form.outputInventoryItemId)
+                    : "";
+                  const outInv = outInvId
+                    ? inventoryItems.find((i: any) => String(i._id) === outInvId)
+                    : null;
+                  const baseUnit = outInv?.unit ? String(outInv.unit).trim().toLowerCase() : "";
+                  const outUnitRaw = form.outputInventoryItemId
+                    ? String(form.outputUnit || outInv?.unit || "")
+                    : String(form.outputUnit || "");
+                  const outputIsBaseUnit =
+                    !!outInv &&
+                    baseUnit.length > 0 &&
+                    outUnitRaw.trim().toLowerCase() === baseUnit;
+                  const chefLine =
+                    outInvId && qty > 0 && outputIsBaseUnit
+                      ? chefReadableText(outInvId, qty)
+                      : null;
+                  const formulaLine = outInvId ? chefFormulaText(outInvId) : null;
+
+                  if (qty <= 0 && !form.outputItemName?.trim()) return null;
+
+                  return (
+                    <div className="col-span-full mt-2 rounded-lg border border-[#ff6b00]/20 bg-orange-50/60 px-3 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#a04100]/90">
+                        In plain terms
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-slate-800">
+                        {qty > 0 ? (
+                          <>
+                            <span className="font-semibold text-[#191c1e]">
+                              {qty} {unitLabel}
+                            </span>{" "}
+                            of <span className="font-semibold text-[#191c1e]">{name}</span> for{" "}
+                            <span className="font-semibold text-[#191c1e]">{fmt(totalBatch)}</span>{" "}
+                            ingredient cost this batch
+                            {qty > 0 && (
+                              <>
+                                {" "}
+                                →{" "}
+                                <span className="font-semibold text-[#191c1e]">{fmt(perUnit)}</span> per{" "}
+                                {unitLabel}
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-slate-600">
+                            Enter <strong>Quantity produced</strong> to see cost per {unitLabel || "unit"}.
+                          </span>
+                        )}
+                      </p>
+                      {chefLine ? (
+                        <p className="mt-1 text-xs text-[#0062a1]">
+                          Chef units: <span className="font-medium">{chefLine}</span>
+                        </p>
+                      ) : null}
+                      {!chefLine && outInvId && qty > 0 && !outputIsBaseUnit ? (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Link output to inventory and use the same unit as stock ({outInv?.unit ?? "—"}) to
+                          show purchase vs chef breakdown like Purchase Orders.
+                        </p>
+                      ) : null}
+                      {formulaLine ? (
+                        <p className="mt-0.5 text-[11px] text-slate-600">Formula: {formulaLine}</p>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+
                 <div className="col-span-full space-y-2">
                   <LabelWithInfo id="prod-notes" label="Production Notes" infoKey="notes" openKey={openInfoKey} onToggle={setOpenInfoKey} containerRef={infoPopoverRef} />
                   <Textarea

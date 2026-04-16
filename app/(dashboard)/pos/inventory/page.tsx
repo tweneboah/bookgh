@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import apiClient from "@/lib/api-client";
 import {
   useInventoryItems,
   useInventoryItem,
@@ -32,15 +34,21 @@ import {
   FiAlertTriangle,
   FiChevronLeft,
   FiChevronRight,
+  FiDownload,
+  FiPrinter,
+  FiExternalLink,
 } from "react-icons/fi";
 import toast from "react-hot-toast";
+import { convertBaseQtyToChefYieldQty } from "@/lib/unit-conversion";
+import { formatDisplayQuantity } from "@/lib/format-display-qty";
 
 const POS_INV_FIELD_INFOS: Record<string, string> = {
   name: "Display name for this product (e.g. Rice, Vegetable Oil).",
   category: "Type of product for filtering and reports (e.g. Staples, Dairy).",
   unit: "How you track stock: kg, litre, pcs, unit, etc. All stock numbers use this base unit.",
   unitConversions: "Optional: other units that convert to base unit. Format: unit=factor (e.g. g=0.001 if base is kg). One per line or comma-separated.",
-  unitCost: "Cost you pay per one unit of this product (GHS). Used for costing and reports.",
+  unitCost:
+    "Cost per inventory base unit (e.g. per kg). Line value uses this × current stock. When yields exist, we also show cost per chef unit (e.g. per plate).",
   currentStock: "How much you have right now, in the base unit. Set to 0 if not yet received.",
   minimumStock: "Don't let stock go below this. Used for low-stock alerts.",
   reorderLevel: "When stock reaches this level, trigger a reorder. Same unit as Current Stock.",
@@ -185,18 +193,37 @@ function LabelWithInfo({
 }
 
 const fmt = (n: number) =>
-  new Intl.NumberFormat("en-GH", {
-    style: "currency",
-    currency: "GHS",
+  `₵${new Intl.NumberFormat("en-GH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(n);
+  }).format(n)}`;
 
 const fmtQty = (n: number) =>
   new Intl.NumberFormat("en-GH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
+
+/** Restaurant: total base units everywhere (main store + kitchen + front). Movement / transfers use main store (`currentStock`) only. */
+function effectiveBaseQty(row: any, department: string): number {
+  if (
+    (department === "restaurant" || department === "bar") &&
+    row.totalOnHandBase != null &&
+    Number.isFinite(Number(row.totalOnHandBase))
+  ) {
+    return Number(row.totalOnHandBase);
+  }
+  return Number(row.currentStock ?? 0);
+}
+
+/** Base stock with inventory unit, e.g. "40 kg" or "40.5 kg" (restaurant: one decimal; procurement: two). */
+function formatStockWithBaseUnit(row: any, department: string): string {
+  const base = effectiveBaseQty(row, department);
+  const qty =
+    (department === "restaurant" || department === "bar") ? formatDisplayQuantity(base, 1) : fmtQty(base);
+  const u = String(row.unit ?? "").trim();
+  return u ? `${qty} ${u}` : qty;
+}
 
 /** Resolve supplier for display: string field, or populated object with .name, or supplierId?.name */
 function getSupplierDisplay(row: any): string {
@@ -219,7 +246,17 @@ function normalizeId(value: any): string {
 
 export default function InventoryPage() {
   const searchParams = useSearchParams();
-  const department = searchParams.get("department") ?? "inventoryProcurement";
+  const rawDept = searchParams.get("department");
+  const department = (rawDept ? rawDept.toLowerCase() : "inventoryProcurement") as string;
+  const isChefDept = department === "restaurant" || department === "bar";
+
+  if (typeof window !== "undefined") {
+    // Debug: track how inventory department is resolved and which layout is used
+    // eslint-disable-next-line no-console
+    console.log("[POS-INVENTORY] department param:", rawDept, "resolved:", department, "isChefDept:", isChefDept);
+  }
+  const fmtQtyDept = (n: number) =>
+    isChefDept ? formatDisplayQuantity(n, 1) : fmtQty(n);
   const [page, setPage] = useState(1);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [searchFilter, setSearchFilter] = useState("");
@@ -229,6 +266,11 @@ export default function InventoryPage() {
   const [showDelete, setShowDelete] = useState<string | null>(null);
   const [openInfoKey, setOpenInfoKey] = useState<string | null>(null);
   const infoPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [hideZeroStock, setHideZeroStock] = useState(false);
+  const [asOfTime, setAsOfTime] = useState(() => new Date());
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!openInfoKey) return;
@@ -252,9 +294,6 @@ export default function InventoryPage() {
     reorderLevel: string;
     unitCost: string;
     supplier: string;
-    purchaseUnitId: string;
-    yieldUnitId: string;
-    yieldPerPurchaseUnit: string;
     images: UploadedImage[];
     totalAmountEntered: string;
   }>({
@@ -268,31 +307,36 @@ export default function InventoryPage() {
     reorderLevel: "",
     unitCost: "",
     supplier: "",
-    purchaseUnitId: "",
-    yieldUnitId: "",
-    yieldPerPurchaseUnit: "",
     images: [],
     totalAmountEntered: "",
   });
 
-  const params: Record<string, string> = {
-    page: String(page),
-    limit: "20",
-    department,
-  };
-  if (categoryFilter) params.category = categoryFilter;
+  const RESTAURANT_PAGE_SIZE = 20;
 
-  const { data, isLoading } = useInventoryItems(params);
+  const listParams = useMemo(() => {
+    const p: Record<string, string> = { department };
+    if (categoryFilter) p.category = categoryFilter;
+    if (isChefDept) {
+      p.page = "1";
+      p.limit = "500";
+    } else {
+      p.page = String(page);
+      p.limit = "20";
+    }
+    return p;
+  }, [department, categoryFilter, page]);
+
+  const { data, isLoading } = useInventoryItems(listParams);
   const { data: allData } = useInventoryItems({ limit: "500", department });
   const { data: fullItem } = useInventoryItem(editItem?._id, { department });
   const { data: suppliersData } = useSuppliers(
-    department === "restaurant" ? { department: "restaurant", limit: "200" } : { limit: "0" }
+    isChefDept ? { department, limit: "200" } : { limit: "0" }
   );
   const { data: restaurantUnitsData } = useRestaurantUnits(
-    department === "restaurant" ? { limit: "200", active: "true" } : { limit: "0" }
+    isChefDept ? { limit: "200", active: "true", department } : { limit: "0" }
   );
   const { data: yieldsRaw } = useItemYields(
-    department === "restaurant" ? { limit: "1000" } : { limit: "0" }
+    isChefDept ? { limit: "1000", department } : { limit: "0" }
   );
   const yieldMappings: any[] = useMemo(
     () => (Array.isArray(yieldsRaw) ? yieldsRaw : (yieldsRaw as any)?.data ?? []),
@@ -303,28 +347,27 @@ export default function InventoryPage() {
   const deleteMut = useDeleteInventoryItem();
 
   const items = data?.data ?? [];
+
+  /** Item has ItemYield row(s) or legacy purchase/yield/yieldPer on the document */
+  const restaurantRowHasYieldMapping = (row: any) => {
+    const itemId = String(row._id);
+    if (
+      yieldMappings.some(
+        (y: any) => String(y.inventoryItemId?._id ?? y.inventoryItemId) === itemId
+      )
+    ) {
+      return true;
+    }
+    const pid = normalizeId(row.purchaseUnitId);
+    const yid = normalizeId(row.yieldUnitId);
+    const ypp = Number(row.yieldPerPurchaseUnit ?? 0);
+    return Boolean(pid && yid && Number.isFinite(ypp) && ypp > 0);
+  };
+
   const pagination = data?.meta?.pagination;
   const allItems = allData?.data ?? [];
   const suppliers = suppliersData?.data ?? [];
   const restaurantUnits = restaurantUnitsData?.data ?? [];
-  const purchaseUnitOptions = useMemo(
-    () => [
-      { value: "", label: "None" },
-      ...restaurantUnits
-        .filter((u: any) => u.type === "purchase" || u.type === "both")
-        .map((u: any) => ({ value: u._id, label: u.abbreviation ? `${u.name} (${u.abbreviation})` : u.name })),
-    ],
-    [restaurantUnits]
-  );
-  const yieldUnitOptions = useMemo(
-    () => [
-      { value: "", label: "None" },
-      ...restaurantUnits
-        .filter((u: any) => u.type === "yield" || u.type === "both")
-        .map((u: any) => ({ value: u._id, label: u.abbreviation ? `${u.name} (${u.abbreviation})` : u.name })),
-    ],
-    [restaurantUnits]
-  );
   const supplierOptions = useMemo(
     () =>
       suppliers.map((s: any) => ({
@@ -345,7 +388,7 @@ export default function InventoryPage() {
   };
 
   const getYieldInfo = (row: any) => {
-    if (department !== "restaurant") return null;
+    if (!isChefDept) return null;
     const itemId = String(row._id);
     const yields = yieldMappings.filter(
       (y: any) => String(y.inventoryItemId?._id ?? y.inventoryItemId) === itemId
@@ -374,6 +417,92 @@ export default function InventoryPage() {
       return [{ fromQty: 1, fromName: purchaseName, toQty: yieldPer, toName: yieldName, costPerYield }];
     }
     return null;
+  };
+
+  /** Cost per chef/yield unit (e.g. ₵5.00/plate) from the first yield mapping; null if unknown. */
+  const getFirstYieldUnitCostPlain = (row: any): string | null => {
+    if (!isChefDept) return null;
+    const yields = getYieldInfo(row);
+    if (!yields?.length) return null;
+    const y = yields[0];
+    let per: number | null = null;
+    if (y.costPerYield != null && Number(y.costPerYield) > 0) {
+      per = Number(y.costPerYield);
+    } else {
+      const uc = Number(row.unitCost ?? 0);
+      const baseUnit = String(row.unit ?? "").trim().toLowerCase();
+      const fromN = String(y.fromName ?? "").toLowerCase();
+      if (y.toQty > 0 && baseUnit && fromN === baseUnit) {
+        per = (uc * y.fromQty) / y.toQty;
+      }
+    }
+    if (per == null || !Number.isFinite(per)) return null;
+    return `${fmt(Math.round(per * 100) / 100)}/${y.toName}`;
+  };
+
+  /** `fromUnit` name for yield math — must match server-side convertChefQtyToBaseQty (uses RestaurantUnit `name`). */
+  const yieldFromUnitNameForConversion = (y: any) => {
+    if (typeof y.fromUnitId === "object" && y.fromUnitId?.name) return String(y.fromUnitId.name);
+    const id = typeof y.fromUnitId === "object" ? y.fromUnitId?._id : y.fromUnitId;
+    const found = restaurantUnits.find((u: any) => String(u._id) === String(id ?? ""));
+    if (found?.name) return String(found.name);
+    return resolveUnitName(y.fromUnitId);
+  };
+
+  /** Chef/yield equivalents for any base quantity at this row (same mappings as total on hand). */
+  const getChefEquivalentsForBaseQuantity = (
+    row: any,
+    baseQuantity: number
+  ): { label: string; qty: number }[] => {
+    if (!isChefDept) return [];
+    const itemId = String(row._id);
+    const base = Number(baseQuantity);
+    if (!Number.isFinite(base)) return [];
+    const yields = yieldMappings.filter(
+      (y: any) => String(y.inventoryItemId?._id ?? y.inventoryItemId) === itemId
+    );
+    const out: { label: string; qty: number }[] = [];
+    for (const y of yields) {
+      const toLabel = resolveUnitName(y.toUnitId);
+      const chefQty = convertBaseQtyToChefYieldQty({
+        baseQuantity: base,
+        item: row,
+        yieldRow: {
+          fromQty: Number(y.fromQty || 1),
+          toQty: Number(y.toQty || 1),
+          baseUnitQty: y.baseUnitQty != null ? Number(y.baseUnitQty) : undefined,
+          fromUnitName: yieldFromUnitNameForConversion(y),
+        },
+      });
+      if (chefQty != null && Number.isFinite(chefQty) && chefQty >= 0) {
+        out.push({ label: toLabel, qty: chefQty });
+      }
+    }
+    return out;
+  };
+
+  /** Live chef/yield equivalents for current total base stock (updates when orders deduct stock). */
+  const getChefEquivalentsForStock = (row: any): { label: string; qty: number }[] =>
+    getChefEquivalentsForBaseQuantity(row, effectiveBaseQty(row, department));
+
+  /** One location line: `4.1 kg (≈ 98.2 Plates)` when yields exist, else `4.1 kg`. */
+  const formatLocationStockWithYield = (row: any, qty: number): string => {
+    const baseU = String(row.unit ?? "").trim();
+    const qtyStr = baseU ? `${fmtQtyDept(qty)} ${baseU}` : fmtQtyDept(qty);
+    const eqs = getChefEquivalentsForBaseQuantity(row, qty);
+    if (eqs.length === 0) return qtyStr;
+    const inner = eqs
+      .map((e) => `≈ ${formatDisplayQuantity(e.qty, 1)} ${e.label}`)
+      .join(" · ");
+    return `${qtyStr} (${inner})`;
+  };
+
+  /** First chef/yield equivalent for reporting columns (e.g. "100 serves"). */
+  const getPrimaryYieldLabel = (row: any): string => {
+    const eqs = getChefEquivalentsForStock(row);
+    if (!eqs.length) return "—";
+    const e = eqs[0];
+    return `${formatDisplayQuantity(e.qty, 1)} ${e.label}`;
   };
 
   // When edit modal is open, sync form from full item fetch (ensures supplier and all fields are correct)
@@ -406,9 +535,6 @@ export default function InventoryPage() {
       reorderLevel: item.reorderLevel != null ? String(item.reorderLevel) : prev.reorderLevel,
       unitCost: item.unitCost != null ? String(item.unitCost) : prev.unitCost,
       supplier: supplierValue,
-      purchaseUnitId: normalizeId(item.purchaseUnitId) || prev.purchaseUnitId || "",
-      yieldUnitId: normalizeId(item.yieldUnitId) || prev.yieldUnitId || "",
-      yieldPerPurchaseUnit: item.yieldPerPurchaseUnit != null ? String(item.yieldPerPurchaseUnit) : prev.yieldPerPurchaseUnit ?? "",
       images,
       totalAmountEntered: "",
     }));
@@ -461,9 +587,6 @@ export default function InventoryPage() {
       reorderLevel: "",
       unitCost: "",
       supplier: "",
-      purchaseUnitId: "",
-      yieldUnitId: "",
-      yieldPerPurchaseUnit: "",
       images: [],
       totalAmountEntered: "",
     });
@@ -505,9 +628,6 @@ export default function InventoryPage() {
       reorderLevel: item.reorderLevel != null ? String(item.reorderLevel) : "",
       unitCost: item.unitCost != null ? String(item.unitCost) : "",
       supplier: supplierValue,
-      purchaseUnitId: normalizeId(item.purchaseUnitId),
-      yieldUnitId: normalizeId(item.yieldUnitId),
-      yieldPerPurchaseUnit: item.yieldPerPurchaseUnit != null ? String(item.yieldPerPurchaseUnit) : "",
       images,
       totalAmountEntered: "",
     });
@@ -553,9 +673,6 @@ export default function InventoryPage() {
       reorderLevel: form.reorderLevel ? parseFloat(form.reorderLevel) : 0,
       unitCost: form.unitCost ? parseFloat(form.unitCost) : 0,
       supplier: form.supplier.trim() || undefined,
-      purchaseUnitId: normalizeId(form.purchaseUnitId) || undefined,
-      yieldUnitId: normalizeId(form.yieldUnitId) || undefined,
-      yieldPerPurchaseUnit: form.yieldPerPurchaseUnit ? parseFloat(form.yieldPerPurchaseUnit) : undefined,
     };
 
     try {
@@ -585,137 +702,565 @@ export default function InventoryPage() {
   };
 
   const isLowStock = (row: any) => {
-    const cur = row.currentStock ?? 0;
+    const cur = effectiveBaseQty(row, department);
     const min = row.minimumStock ?? 0;
     return min > 0 && cur <= min;
   };
 
+  const lineStockValue = (row: any) => {
+    const qty = effectiveBaseQty(row, department);
+    const cost = Number(row.unitCost ?? 0);
+    if (!Number.isFinite(qty) || !Number.isFinite(cost)) return 0;
+    return Number((qty * cost).toFixed(2));
+  };
+
+  const filteredItems = useMemo(() => {
+    let out = items;
+    const q = searchFilter.trim().toLowerCase();
+    if (q) {
+      out = out.filter((row: any) => String(row?.name ?? "").toLowerCase().includes(q));
+    }
+    if (supplierFilter.trim()) {
+      const s = supplierFilter.trim().toLowerCase();
+      out = out.filter((row: any) => getSupplierDisplay(row).toLowerCase().includes(s));
+    }
+    if (lowStockOnly) {
+      out = out.filter((row: any) => {
+        const cur = effectiveBaseQty(row, department);
+        const min = row.minimumStock ?? 0;
+        return min > 0 && cur <= min;
+      });
+    }
+    if (hideZeroStock) {
+      out = out.filter((row: any) => effectiveBaseQty(row, department) > 0);
+    }
+    return out;
+  }, [items, searchFilter, supplierFilter, lowStockOnly, hideZeroStock, department]);
+
+  const restaurantUnmappedYieldCount = useMemo(() => {
+    if (!isChefDept) return 0;
+    return filteredItems.filter((row: any) => !restaurantRowHasYieldMapping(row)).length;
+  }, [isChefDept, filteredItems, yieldMappings]);
+
   const lowStockCount = useMemo(
-    () => items.filter((row: any) => isLowStock(row)).length,
-    [items]
+    () => filteredItems.filter((row: any) => isLowStock(row)).length,
+    [filteredItems, department]
   );
 
   const totalInventoryValue = useMemo(() => {
-    return items.reduce((sum: number, row: any) => {
-      const qty = Number(row.currentStock ?? 0);
+    return filteredItems.reduce((sum: number, row: any) => {
+      const qty = effectiveBaseQty(row, department);
       const cost = Number(row.unitCost ?? 0);
       if (!Number.isFinite(qty) || !Number.isFinite(cost)) return sum;
       return sum + qty * cost;
     }, 0);
-  }, [items]);
+  }, [filteredItems, department]);
 
-  const filteredItems = useMemo(() => {
+  /** Table rows: client-side page for restaurant; server page for other departments. */
+  const displayItems = useMemo(() => {
+    if (!isChefDept) return filteredItems;
+    const start = (page - 1) * RESTAURANT_PAGE_SIZE;
+    return filteredItems.slice(start, start + RESTAURANT_PAGE_SIZE);
+  }, [department, filteredItems, page]);
+
+  const listPagination = useMemo(() => {
+    if (isChefDept) {
+      const total = filteredItems.length;
+      const limit = RESTAURANT_PAGE_SIZE;
+      const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
+      return {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      };
+    }
+    return pagination;
+  }, [department, filteredItems.length, page, pagination]);
+
+  useEffect(() => {
+    if (!isLoading && data) setAsOfTime(new Date());
+  }, [isLoading, data]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [categoryFilter, searchFilter, supplierFilter, lowStockOnly, hideZeroStock, department]);
+
+  const csvEscape = (v: string) => {
+    const s = String(v ?? "");
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const fetchAllInventoryForExport = async (): Promise<any[]> => {
+    const all: any[] = [];
+    let p = 1;
+    const limit = 500;
+    while (true) {
+      const qs = new URLSearchParams({
+        department,
+        page: String(p),
+        limit: String(limit),
+      });
+      if (categoryFilter) qs.set("category", categoryFilter);
+      const res = await apiClient.get(`/pos/inventory?${qs.toString()}`);
+      const payload = res.data;
+      const rows = Array.isArray(payload?.data) ? payload.data : [];
+      const meta = payload?.meta?.pagination;
+      all.push(...rows);
+      if (!meta?.hasNext || rows.length === 0) break;
+      p += 1;
+      if (p > 400) break;
+    }
+    return all;
+  };
+
+  const buildExportRows = (rows: any[]) => {
+    let out = rows;
     const q = searchFilter.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((row: any) =>
-      String(row?.name ?? "").toLowerCase().includes(q)
-    );
-  }, [items, searchFilter]);
+    if (q) {
+      out = out.filter((row: any) => String(row?.name ?? "").toLowerCase().includes(q));
+    }
+    if (supplierFilter.trim()) {
+      const s = supplierFilter.trim().toLowerCase();
+      out = out.filter((row: any) => getSupplierDisplay(row).toLowerCase().includes(s));
+    }
+    if (lowStockOnly) {
+      out = out.filter((row: any) => {
+        const cur = effectiveBaseQty(row, department);
+        const min = row.minimumStock ?? 0;
+        return min > 0 && cur <= min;
+      });
+    }
+    if (hideZeroStock) {
+      out = out.filter((row: any) => effectiveBaseQty(row, department) > 0);
+    }
+    return out;
+  };
 
-  const tableColumns = [
-    {
-      key: "images",
-      header: "",
-      render: (row: any) => {
-        const imgs = Array.isArray(row.images) ? row.images : [];
-        if (imgs.length === 0)
-          return (
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
-              <FiImage className="h-4 w-4" />
-            </span>
-          );
-        return (
-          <div className="flex gap-1">
-            {imgs.slice(0, 2).map((img: { url: string; caption?: string }, i: number) => (
-              <a
-                key={i}
-                href={img.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ring-1 ring-slate-100 transition hover:ring-[#5a189a]/30"
-              >
-                <img src={img.url} alt={img.caption || `Image ${i + 1}`} className="h-full w-full object-cover" />
-              </a>
-            ))}
-            {imgs.length > 2 && (
-              <span className="flex h-9 items-center text-xs font-medium text-slate-400">+{imgs.length - 2}</span>
-            )}
-          </div>
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const total = pagination?.total ?? items.length;
+      const needFetchAll = items.length < total || !isChefDept;
+      const sourceRows = needFetchAll ? await fetchAllInventoryForExport() : items;
+      const finalRows = buildExportRows(sourceRows);
+
+      const header: string[] = [
+        "Name",
+        ...(isChefDept ? ["Total on hand (base)"] : ["Unit", "Current Stock"]),
+        ...(isChefDept ? ["Stock (chef plain)"] : []),
+        "Min",
+        "Reorder",
+        "Unit Cost (base)",
+        ...(isChefDept ? ["Unit cost (chef)"] : []),
+        "Line Value (₵)",
+        ...(isChefDept ? ["Yield mapping", "Primary yield"] : []),
+        "Supplier",
+      ];
+
+      const lines = [header.join(",")];
+      for (const row of finalRows) {
+        const stock = Number(row.currentStock ?? 0);
+        const lv = lineStockValue(row);
+        const chefPlain =
+          isChefDept
+            ? getChefEquivalentsForStock(row)
+                .map((e) => `${formatDisplayQuantity(e.qty, 1)} ${e.label}`)
+                .join(" · ") || ""
+            : "";
+        const ymap =
+          isChefDept
+            ? (() => {
+                const yields = getYieldInfo(row);
+                if (!yields?.length) return "";
+                const y = yields[0];
+                return `${formatDisplayQuantity(Number(y.fromQty), 1)} ${y.fromName} → ${formatDisplayQuantity(Number(y.toQty), 1)} ${y.toName}`;
+              })()
+            : "";
+        const primary = isChefDept ? getPrimaryYieldLabel(row) : "";
+        const cells: string[] = [csvEscape(String(row.name ?? ""))];
+        if (isChefDept) {
+          cells.push(csvEscape(formatStockWithBaseUnit(row, department)));
+        } else {
+          cells.push(csvEscape(String(row.unit ?? "")), csvEscape(fmtQty(stock)));
+        }
+        if (isChefDept) cells.push(csvEscape(chefPlain));
+        cells.push(
+          csvEscape(fmtQtyDept(Number(row.minimumStock ?? 0))),
+          csvEscape(fmtQtyDept(Number(row.reorderLevel ?? 0))),
+          csvEscape(row.unitCost != null ? String(row.unitCost) : "")
         );
-      },
-    },
-    { key: "name", header: "Name", sortable: true },
-    { key: "category", header: "Category" },
-    { key: "unit", header: "Unit", render: (row: any) => row.unit ?? "—" },
-    {
-      key: "currentStock",
-      header: "Current Stock",
-      render: (row: any) => (
-        <span className={isLowStock(row) ? "font-semibold text-[#c2410c]" : "text-slate-700"}>
-          {fmtQty(Number(row.currentStock ?? 0))}
-        </span>
-      ),
-    },
-    {
-      key: "minimumStock",
-      header: "Min",
-      render: (row: any) => fmtQty(Number(row.minimumStock ?? 0)),
-    },
-    {
-      key: "reorderLevel",
-      header: "Reorder",
-      render: (row: any) => fmtQty(Number(row.reorderLevel ?? 0)),
-    },
-    {
-      key: "unitCost",
-      header: "Unit Cost",
-      render: (row: any) => (row.unitCost != null ? fmt(row.unitCost) : "—"),
-    },
-    {
-      key: "supplier",
-      header: "Supplier",
-      render: (row: any) => {
-        const name = getSupplierDisplay(row);
-        return name !== "—" ? <span className="text-slate-600">{name}</span> : "—";
-      },
-    },
-    {
-      key: "actions",
-      header: "",
-      render: (row: any) => (
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openEdit(row)}
-            aria-label="Edit"
-            className="text-slate-500 hover:bg-[#5a189a]/10 hover:text-[#5a189a]"
-          >
-            <FiEdit2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowDelete(row._id)}
-            aria-label="Delete"
-            className="text-slate-500 hover:bg-red-50 hover:text-red-600"
-          >
-            <FiTrash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      ),
-    },
-  ];
+        if (isChefDept) {
+          cells.push(csvEscape(getFirstYieldUnitCostPlain(row) ?? ""));
+        }
+        cells.push(csvEscape(fmt(lv)));
+        if (isChefDept) {
+          cells.push(csvEscape(ymap), csvEscape(primary === "—" ? "" : primary));
+        }
+        cells.push(csvEscape(getSupplierDisplay(row)));
+        lines.push(cells.join(","));
+      }
 
-  const title = department === "restaurant" ? "Restaurant Inventory" : "POS Inventory";
+      const blob = new Blob(["\uFEFF" + lines.join("\n")], {
+        type: "text/csv;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `inventory-${department}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${finalRows.length} rows`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handlePrintReport = () => {
+    const rows = filteredItems;
+    const title =
+      isChefDept ? `${department === 'bar' ? 'Bar' : 'Restaurant'} inventory report` : "POS inventory report";
+    const w = window.open("", "_blank");
+    if (!w) {
+      toast.error("Allow pop-ups to print");
+      return;
+    }
+    w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+      <style>
+        body { font-family: system-ui, sans-serif; padding: 24px; color: #111; }
+        h1 { font-size: 1.25rem; margin: 0 0 8px; }
+        .meta { color: #555; font-size: 12px; margin-bottom: 16px; }
+        .kpi { display: flex; gap: 24px; margin-bottom: 20px; font-size: 14px; }
+        table { border-collapse: collapse; width: 100%; font-size: 12px; }
+        th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+        th { background: #f3f4f6; }
+        .num { text-align: right; }
+        @media print { body { padding: 12px; } }
+      </style></head><body>`);
+    w.document.write(`<h1>${title}</h1>`);
+    w.document.write(
+      `<div class="meta">As of ${asOfTime.toLocaleString()} · Category: ${categoryFilter || "All"} · Search: ${searchFilter || "—"}</div>`
+    );
+    w.document.write(
+      `<div class="kpi"><span><strong>Items</strong> ${rows.length}</span><span><strong>Low stock</strong> ${lowStockCount}</span><span><strong>Total value</strong> ${fmt(totalInventoryValue)}</span></div>`
+    );
+    w.document.write("<table><thead><tr>");
+    const ths =
+      isChefDept
+        ? ["Name", "Stock", "Primary yield", "Line value", "Supplier"]
+        : ["Name", "Unit", "Stock", "Supplier"];
+    ths.forEach((h) => w.document.write(`<th>${h}</th>`));
+    w.document.write("</tr></thead><tbody>");
+    for (const row of rows.slice(0, 500)) {
+      w.document.write("<tr>");
+      w.document.write(`<td>${String(row.name ?? "").replace(/</g, "&lt;")}</td>`);
+      if (isChefDept) {
+        w.document.write(
+          `<td class="num">${String(formatStockWithBaseUnit(row, department)).replace(/</g, "&lt;")}</td>`
+        );
+        w.document.write(`<td>${getPrimaryYieldLabel(row).replace(/</g, "&lt;")}</td>`);
+        w.document.write(`<td class="num">${fmt(lineStockValue(row))}</td>`);
+      } else {
+        w.document.write(`<td>${String(row.unit ?? "").replace(/</g, "&lt;")}</td>`);
+        w.document.write(`<td class="num">${fmtQty(Number(row.currentStock ?? 0))}</td>`);
+      }
+      w.document.write(`<td>${getSupplierDisplay(row).replace(/</g, "&lt;")}</td>`);
+      w.document.write("</tr>");
+    }
+    w.document.write("</tbody></table>");
+    if (rows.length > 500) {
+      w.document.write(
+        `<p style="font-size:12px;color:#666">Showing first 500 of ${rows.length} rows. Use CSV export for the full list.</p>`
+      );
+    }
+    w.document.write("</body></html>");
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  };
+
+  const supplierNamesFromItems = useMemo(() => {
+    const set = new Set<string>();
+    allItems.forEach((row: any) => {
+      const d = getSupplierDisplay(row);
+      if (d && d !== "—") set.add(d);
+    });
+    return Array.from(set).sort();
+  }, [allItems]);
+
+  const tableColumns = isChefDept
+    ? [
+        {
+          key: "images",
+          header: "",
+          render: (row: any) => {
+            const imgs = Array.isArray(row.images) ? row.images : [];
+            if (imgs.length === 0)
+              return (
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                  <FiImage className="h-4 w-4" />
+                </span>
+              );
+            return (
+              <div className="flex gap-1">
+                {imgs.slice(0, 2).map((img: { url: string; caption?: string }, i: number) => (
+                  <a
+                    key={i}
+                    href={img.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ring-1 ring-slate-100 transition hover:ring-[#5a189a]/30"
+                  >
+                    <img src={img.url} alt={img.caption || `Image ${i + 1}`} className="h-full w-full object-cover" />
+                  </a>
+                ))}
+                {imgs.length > 2 && (
+                  <span className="flex h-9 items-center text-xs font-medium text-slate-400">
+                    +{imgs.length - 2}
+                  </span>
+                )}
+              </div>
+            );
+          },
+        },
+        { key: "name", header: "Name", sortable: true },
+        {
+          key: "totalOnHand",
+          header: "Total on hand",
+          render: (row: any) => (
+            <div className="text-sm text-slate-700">
+              {formatStockWithBaseUnit(row, department)}
+            </div>
+          ),
+        },
+        {
+          key: "minimumStock",
+          header: "Min",
+          render: (row: any) => fmtQtyDept(Number(row.minimumStock ?? 0)),
+        },
+        {
+          key: "reorderLevel",
+          header: "Reorder",
+          render: (row: any) => fmtQtyDept(Number(row.reorderLevel ?? 0)),
+        },
+        {
+          key: "unitCostCombined",
+          header: "Unit cost (base + chef)",
+          render: (row: any) => {
+            const base = row.unitCost != null ? fmt(row.unitCost) : null;
+            const chef = getFirstYieldUnitCostPlain(row);
+            const baseUnit = String(row.unit ?? "").trim();
+            return (
+              <div className="flex flex-col text-xs text-slate-700">
+                <span>
+                  {base ?? "—"}
+                  {base && baseUnit && (
+                    <span className="ml-1 text-[11px] text-slate-500">
+                      per {baseUnit} (base)
+                    </span>
+                  )}
+                </span>
+                {chef && (
+                  <span className="text-slate-500">
+                    {chef} <span className="ml-0.5 text-[11px] text-slate-500">(chef)</span>
+                  </span>
+                )}
+              </div>
+            );
+          },
+        },
+        {
+          key: "lineValue",
+          header: "Line value",
+          render: (row: any) => fmt(lineStockValue(row)),
+        },
+        {
+          key: "primaryYield",
+          header: "Primary yield",
+          render: (row: any) => getPrimaryYieldLabel(row),
+        },
+        {
+          key: "yieldMapping",
+          header: "Chef Unit / Yield",
+          render: (row: any) => {
+            const info = getYieldInfo(row);
+            if (!info || !info.length) {
+              const href =
+                department === "bar"
+                  ? "/bar/units?tab=yields"
+                  : "/restaurant/units?tab=yields";
+              return (
+                <Link
+                  href={href}
+                  className="text-xs font-semibold text-[#ff6d00] hover:underline"
+                >
+                  Add mapping
+                </Link>
+              );
+            }
+            const y = info[0];
+            const label = `${formatDisplayQuantity(Number(y.fromQty), 1)} ${y.fromName} → ${formatDisplayQuantity(
+              Number(y.toQty),
+              1
+            )} ${y.toName}`;
+            return <span className="text-xs text-slate-700">{label}</span>;
+          },
+        },
+        {
+          key: "supplier",
+          header: "Supplier",
+          render: (row: any) => {
+            const name = getSupplierDisplay(row);
+            return name !== "—" ? <span className="text-slate-600">{name}</span> : "—";
+          },
+        },
+        {
+          key: "actions",
+          header: "",
+          render: (row: any) => (
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openEdit(row)}
+                aria-label="Edit"
+                className="text-slate-500 hover:bg-[#5a189a]/10 hover:text-[#5a189a]"
+              >
+                <FiEdit2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDelete(row._id)}
+                aria-label="Delete"
+                className="text-slate-500 hover:bg-red-50 hover:text-red-600"
+              >
+                <FiTrash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ),
+        },
+      ]
+    : [
+        {
+          key: "images",
+          header: "",
+          render: (row: any) => {
+            const imgs = Array.isArray(row.images) ? row.images : [];
+            if (imgs.length === 0)
+              return (
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                  <FiImage className="h-4 w-4" />
+                </span>
+              );
+            return (
+              <div className="flex gap-1">
+                {imgs.slice(0, 2).map((img: { url: string; caption?: string }, i: number) => (
+                  <a
+                    key={i}
+                    href={img.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ring-1 ring-slate-100 transition hover:ring-[#5a189a]/30"
+                  >
+                    <img src={img.url} alt={img.caption || `Image ${i + 1}`} className="h-full w-full object-cover" />
+                  </a>
+                ))}
+                {imgs.length > 2 && (
+                  <span className="flex h-9 items-center text-xs font-medium text-slate-400">
+                    +{imgs.length - 2}
+                  </span>
+                )}
+              </div>
+            );
+          },
+        },
+        { key: "name", header: "Name", sortable: true },
+        { key: "unit", header: "Unit", render: (row: any) => row.unit ?? "—" },
+        {
+          key: "currentStock",
+          header: "Current Stock",
+          render: (row: any) => (
+            <span className={isLowStock(row) ? "font-semibold text-[#c2410c]" : "text-slate-700"}>
+              {fmtQty(Number(row.currentStock ?? 0))}
+            </span>
+          ),
+        },
+        {
+          key: "minimumStock",
+          header: "Min",
+          render: (row: any) => fmtQty(Number(row.minimumStock ?? 0)),
+        },
+        {
+          key: "reorderLevel",
+          header: "Reorder",
+          render: (row: any) => fmtQty(Number(row.reorderLevel ?? 0)),
+        },
+        {
+          key: "unitCost",
+          header: "Unit Cost",
+          render: (row: any) => (row.unitCost != null ? fmt(row.unitCost) : "—"),
+        },
+        {
+          key: "supplier",
+          header: "Supplier",
+          render: (row: any) => {
+            const name = getSupplierDisplay(row);
+            return name !== "—" ? <span className="text-slate-600">{name}</span> : "—";
+          },
+        },
+        {
+          key: "actions",
+          header: "",
+          render: (row: any) => (
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openEdit(row)}
+                aria-label="Edit"
+                className="text-slate-500 hover:bg-[#5a189a]/10 hover:text-[#5a189a]"
+              >
+                <FiEdit2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDelete(row._id)}
+                aria-label="Delete"
+                className="text-slate-500 hover:bg-red-50 hover:text-red-600"
+              >
+                <FiTrash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ),
+        },
+      ];
+
+  if (typeof window !== "undefined") {
+    // Debug: inspect table columns actually passed to DataTable
+    // eslint-disable-next-line no-console
+    console.log(
+      "[POS-INVENTORY] tableColumns for",
+      department,
+      tableColumns.map((c) => c.header)
+    );
+  }
+
+  const title = isChefDept ? (department === "bar" ? "Bar Inventory" : "Restaurant Inventory") : "POS Inventory";
   const isEmpty = !isLoading && items.length === 0;
-  const totalPages = pagination ? Math.ceil(pagination.total / pagination.limit) || 1 : 1;
-  const hasNext = pagination && page < totalPages;
-  const hasPrev = page > 1;
+  const noFilterMatches = !isLoading && items.length > 0 && filteredItems.length === 0;
+  const hasNext = listPagination ? listPagination.hasNext : false;
+  const hasPrev = listPagination ? listPagination.hasPrev : false;
 
   return (
-    <div className="bg-[#f8f6f6] min-h-screen text-slate-900">
-      <div className="max-w-[1400px] mx-auto px-6 py-8">
+    <div className="min-h-screen w-full min-w-0 bg-[#f8f6f6] text-slate-900">
+      <div className="w-full max-w-full min-w-0 mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header Section */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
           <div className="flex flex-col gap-1">
@@ -728,8 +1273,54 @@ export default function InventoryPage() {
             <p className="text-slate-600 text-sm">
               Manage stock, units, costs and reorder levels for your items.
             </p>
+            {isChefDept ? (
+              <p className="text-xs text-slate-600 max-w-2xl">
+                Stock column shows <span className="font-medium">total on hand</span> (main + kitchen/prep +
+                front house). Hover for the split. <span className="font-medium">Served orders</span>{" "}
+                deduct only from <span className="font-medium">front house</span>; use Movement flow
+                to stage stock (main → kitchen/prep → front house) before service.
+              </p>
+            ) : null}
+            <p className="text-xs text-slate-500">
+              Snapshot as of {asOfTime.toLocaleString()}
+            </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {isChefDept ? (
+              <>
+                <Link
+                  href={`/${department}/stock-control/ledger`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <FiExternalLink className="h-4 w-4" />
+                  Movement ledger
+                </Link>
+                <Link
+                  href={`/reports/${department}`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <FiExternalLink className="h-4 w-4" />
+                  Reports
+                </Link>
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void handleExportCsv()}
+              disabled={exporting || isLoading}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <FiDownload className="h-4 w-4" />
+              {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintReport}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            >
+              <FiPrinter className="h-4 w-4" />
+              Print report
+            </button>
             <button
               type="button"
               onClick={openCreate}
@@ -774,7 +1365,7 @@ export default function InventoryPage() {
           </div>
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
             <div className="bg-slate-100 p-3 rounded-lg text-slate-600">
-              <span className="font-bold">GH₵</span>
+              <span className="font-bold">₵</span>
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
@@ -826,6 +1417,41 @@ export default function InventoryPage() {
               />
             </div>
           </div>
+          <div className="min-w-[200px]">
+            <label className="block text-xs font-semibold text-slate-500 mb-1 ml-1">
+              Supplier
+            </label>
+            <select
+              value={supplierFilter}
+              onChange={(e) => setSupplierFilter(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 focus:ring-2 focus:ring-[#ec5b13]/30 focus:border-[#ec5b13] outline-none"
+            >
+              <option value="">All suppliers</option>
+              {supplierNamesFromItems.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={lowStockOnly}
+              onChange={(e) => setLowStockOnly(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-[#ec5b13] focus:ring-[#ec5b13]"
+            />
+            Low stock only
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={hideZeroStock}
+              onChange={(e) => setHideZeroStock(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-[#ec5b13] focus:ring-[#ec5b13]"
+            />
+            Hide zero stock
+          </label>
         </div>
 
         {/* Inventory Table */}
@@ -844,51 +1470,94 @@ export default function InventoryPage() {
                 actionClassName="bg-[#ec5b13] hover:bg-[#ec5b13]/90"
               />
             </div>
+          ) : noFilterMatches ? (
+            <div className="p-8 text-center text-slate-600">
+              <p className="font-medium text-slate-800">No items match your filters</p>
+              <p className="mt-1 text-sm">Try clearing search, supplier, or stock filters.</p>
+            </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+              {isChefDept && restaurantUnmappedYieldCount > 0 ? (
+                <div className="border-b border-amber-100 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 sm:px-6">
+                  <strong>{restaurantUnmappedYieldCount}</strong>{" "}
+                  {restaurantUnmappedYieldCount === 1 ? "item has" : "items have"} no{" "}
+                  <span className="font-semibold">yield mapping</span>. Add one under{" "}
+                  <Link
+                    href={department === "bar" ? "/bar/units" : "/restaurant/units?tab=yields"}
+                    className="font-semibold text-[#c2410c] underline underline-offset-2 hover:text-amber-900"
+                  >
+                    {department === "bar" ? "Bar → Units & Yields" : "Restaurant → Units → Yield mappings"}
+                  </Link>{" "}
+                  so chef units and transfers convert correctly.
+                </div>
+              ) : null}
+              <div className="w-full min-w-0 overflow-x-auto">
+                <table className="w-full min-w-0 table-auto text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
                         Image
                       </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
                         Name
                       </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Category
-                      </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-center">
-                        Unit
-                      </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
-                        Stock
-                      </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
+                      {isChefDept ? (
+                        <th
+                          className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-right"
+                          title="Sum of main store + kitchen + front house. Transfers from Main Store use only the main-store portion (see breakdown below)."
+                        >
+                          Total on hand
+                        </th>
+                      ) : (
+                        <>
+                          <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-center">
+                            Unit
+                          </th>
+                          <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
+                            Stock
+                          </th>
+                        </>
+                      )}
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
                         Min
                       </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
                         Reorder
                       </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
-                        Unit Cost
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
+                        {isChefDept ? (
+                          <span title="Base unit cost (e.g. per kg) and chef/yield cost when configured">
+                            Unit cost (base + chef)
+                          </span>
+                        ) : (
+                          "Unit Cost"
+                        )}
                       </th>
-                      {department === "restaurant" ? (
-                        <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                      {isChefDept ? (
+                        <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">
+                          Line value
+                        </th>
+                      ) : null}
+                      {isChefDept ? (
+                        <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Primary yield
+                        </th>
+                      ) : null}
+                      {isChefDept ? (
+                        <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
                           Chef Unit / Yield
                         </th>
                       ) : null}
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
                         Supplier
                       </th>
-                      <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-center">
+                      <th className="px-2 py-2.5 sm:px-3 sm:py-3 text-xs font-bold uppercase tracking-wider text-slate-500 text-center">
                         Actions
                       </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {filteredItems.map((row: any) => {
+                    {displayItems.map((row: any) => {
                       const low = isLowStock(row);
                       const imgs = Array.isArray(row.images) ? row.images : [];
                       const firstImg = imgs[0] as { url?: string; caption?: string } | undefined;
@@ -901,7 +1570,7 @@ export default function InventoryPage() {
                               : "hover:bg-slate-50/50 transition-colors"
                           }
                         >
-                          <td className="px-4 py-4">
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3">
                             <div className="flex items-center gap-2">
                               <div className="h-11 w-11 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
                                 {firstImg?.url ? (
@@ -923,39 +1592,151 @@ export default function InventoryPage() {
                               ) : null}
                             </div>
                           </td>
-                          <td className="px-4 py-4 font-semibold">
-                            <span className={low ? "font-bold flex items-center gap-2" : ""}>
-                              {row.name ?? "—"}
-                              {low ? (
-                                <span
-                                  className="text-[#ec5b13] text-[16px]"
-                                  title="Low Stock"
-                                >
-                                  !
-                                </span>
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3 font-semibold">
+                            <div className="flex flex-col gap-1">
+                              <span className={low ? "font-bold flex items-center gap-2" : ""}>
+                                {row.name ?? "—"}
+                                {low ? (
+                                  <span
+                                    className="text-[#ec5b13] text-[16px]"
+                                    title="Low Stock"
+                                  >
+                                    !
+                                  </span>
+                                ) : null}
+                              </span>
+                              {isChefDept && !restaurantRowHasYieldMapping(row) ? (
+                                <div className="max-w-[280px] text-xs font-normal text-slate-600">
+                                  <span className="inline-block rounded-md bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900">
+                                    No yield mapping
+                                  </span>{" "}
+                                  <Link
+                                    href={department === "bar" ? "/bar/units" : "/restaurant/units?tab=yields"}
+                                    className="font-medium text-[#ec5b13] underline hover:text-[#c2410c]"
+                                  >
+                                    Add mapping
+                                  </Link>
+                                </div>
                               ) : null}
-                            </span>
+                            </div>
                           </td>
-                          <td className="px-4 py-4 text-sm text-slate-600">
-                            {row.category ?? "—"}
+                          {isChefDept ? (
+                            <td
+                              className={
+                                low
+                                  ? "px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right font-bold text-[#ec5b13]"
+                                  : "px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right font-medium text-slate-800"
+                              }
+                              title={
+                                row.stockByLocation
+                                  ? `Total matches the large figure. Main store = what Movement Flow calls “Available at Main Store”.`
+                                  : undefined
+                              }
+                            >
+                              <div className="inline-block text-right">
+                                <div>{formatStockWithBaseUnit(row, department)}</div>
+                                {row.stockByLocation ? (
+                                  <div className="mt-1 max-w-[min(100%,28rem)] text-[11px] font-normal leading-snug text-slate-500">
+                                    Main store{" "}
+                                    {formatLocationStockWithYield(
+                                      row,
+                                      Number(row.stockByLocation.mainStore ?? 0)
+                                    )}{" "}
+                                    · Kitchen{" "}
+                                    {formatLocationStockWithYield(
+                                      row,
+                                      Number(row.stockByLocation.kitchen ?? 0)
+                                    )}{" "}
+                                    · Front{" "}
+                                    {formatLocationStockWithYield(
+                                      row,
+                                      Number(row.stockByLocation.frontHouse ?? 0)
+                                    )}
+                                  </div>
+                                ) : null}
+                                {(() => {
+                                  const eqs = getChefEquivalentsForStock(row);
+                                  if (eqs.length === 0) return null;
+                                  const chefStr = eqs
+                                    .map((e) => `${formatDisplayQuantity(e.qty, 1)} ${e.label}`)
+                                    .join(" · ");
+                                  return (
+                                    <div
+                                      className="mt-1 max-w-prose text-xs font-normal leading-snug text-slate-500"
+                                      title="Plain English stock from Units & Yields (updates with sales)"
+                                    >
+                                      ≈ {chefStr}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            </td>
+                        ) : (
+                          <>
+                            <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-center">
+                              {row.unit ?? "—"}
+                            </td>
+                            <td
+                              className={
+                                low
+                                  ? "px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right font-bold text-[#ec5b13]"
+                                  : "px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right font-medium"
+                              }
+                            >
+                              <span className={low ? undefined : "text-slate-700"}>
+                                {fmtQty(Number(row.currentStock ?? 0))}
+                              </span>
+                            </td>
+                          </>
+                        )}
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right">
+                            {fmtQtyDept(Number(row.minimumStock ?? 0))}
                           </td>
-                          <td className="px-4 py-4 text-sm text-center">
-                            {row.unit ?? "—"}
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right">
+                            {fmtQtyDept(Number(row.reorderLevel ?? 0))}
                           </td>
-                          <td className={low ? "px-4 py-4 text-sm text-right font-bold text-[#ec5b13]" : "px-4 py-4 text-sm text-right font-medium"}>
-                            {fmtQty(Number(row.currentStock ?? 0))}
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right">
+                            {row.unitCost != null ? (
+                              isChefDept ? (
+                                <div className="inline-block text-right">
+                                  <div className="font-medium text-slate-900">
+                                    {fmt(Number(row.unitCost ?? 0))}
+                                  </div>
+                                  <div className="text-[11px] font-normal text-slate-500">
+                                    per {String(row.unit ?? "unit").trim() || "unit"} (base)
+                                  </div>
+                                  {(() => {
+                                    const chefCost = getFirstYieldUnitCostPlain(row);
+                                    if (!chefCost) return null;
+                                    return (
+                                      <div
+                                        className="mt-0.5 text-[11px] font-medium text-[#5a189a]"
+                                        title="From Units & Yields: cost per chef/yield unit"
+                                      >
+                                        {chefCost} (chef)
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              ) : (
+                                fmt(Number(row.unitCost ?? 0))
+                              )
+                            ) : (
+                              "—"
+                            )}
                           </td>
-                          <td className="px-4 py-4 text-sm text-right">
-                            {fmtQty(Number(row.minimumStock ?? 0))}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-right">
-                            {fmtQty(Number(row.reorderLevel ?? 0))}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-right">
-                            {row.unitCost != null ? fmt(Number(row.unitCost ?? 0)) : "—"}
-                          </td>
-                          {department === "restaurant" ? (
-                            <td className="px-4 py-4 text-sm italic text-slate-500">
+                          {isChefDept ? (
+                            <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-right font-medium text-slate-800">
+                              {fmt(lineStockValue(row))}
+                            </td>
+                          ) : null}
+                          {isChefDept ? (
+                            <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm text-slate-700">
+                              {getPrimaryYieldLabel(row)}
+                            </td>
+                          ) : null}
+                          {isChefDept ? (
+                            <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm italic text-slate-500">
                               {(() => {
                                 const yields = getYieldInfo(row);
                                 if (!yields || yields.length === 0) return "—";
@@ -967,7 +1748,7 @@ export default function InventoryPage() {
                               })()}
                             </td>
                           ) : null}
-                          <td className="px-4 py-4 text-sm">
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-sm">
                             {getSupplierDisplay(row) !== "—" ? (
                               <span className={low ? "font-medium" : ""}>
                                 {getSupplierDisplay(row)}
@@ -976,7 +1757,7 @@ export default function InventoryPage() {
                               "—"
                             )}
                           </td>
-                          <td className="px-4 py-4 text-center">
+                          <td className="px-2 py-2.5 sm:px-3 sm:py-3 text-center">
                             <div className="flex justify-center gap-2">
                               <button
                                 type="button"
@@ -1006,7 +1787,10 @@ export default function InventoryPage() {
               {/* Pagination / Footer */}
               <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
                 <p className="text-xs text-slate-500">
-                  Showing {filteredItems.length} of {pagination?.total ?? filteredItems.length} items
+                  Showing {displayItems.length} on this page · {filteredItems.length} match filters
+                  {isChefDept && pagination?.total != null
+                    ? ` · ${pagination.total} in category (max 500 loaded)`
+                    : null}
                 </p>
                 <div className="flex items-center gap-2">
                   <button
@@ -1060,8 +1844,8 @@ export default function InventoryPage() {
                   {editItem ? "Edit Inventory Item" : "Add Inventory Item"}
                 </h1>
                 <p className="text-slate-500 text-sm">
-                  {department === "restaurant"
-                    ? "Restaurant stock — name, unit, cost and stock levels"
+                  {isChefDept
+                    ? `${department === "bar" ? "Bar" : "Restaurant"} stock — name, unit, cost and stock levels`
                     : "POS inventory — name, unit, cost and stock levels"}
                 </p>
               </div>
@@ -1168,7 +1952,7 @@ export default function InventoryPage() {
             {/* Section 2: Cost & stock levels */}
             <section className="space-y-6">
               <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-                <span className="text-[#ec5b13] font-bold">GH₵</span>
+                <span className="text-[#ec5b13] font-bold">₵</span>
                 <h2 className="text-lg font-bold">Cost &amp; Stock Levels</h2>
               </div>
               <div className="bg-[#ec5b13]/5 border border-[#ec5b13]/20 p-4 rounded-xl">
@@ -1176,7 +1960,7 @@ export default function InventoryPage() {
                   <span className="font-bold text-[#ec5b13]">What you’re recording:</span>{" "}
                   Current stock in the chosen unit (e.g. 25 kg) and either the total
                   amount you paid for that stock or the cost per unit. The app works
-                  out the other: 25 kg for GH₵500 total → GH₵20 per kg.
+                  out the other: 25 kg for ₵500 total → ₵20 per kg.
                 </p>
               </div>
 
@@ -1216,7 +2000,11 @@ export default function InventoryPage() {
                 <div className="flex flex-col gap-2">
                   <LabelWithInfo
                     id="pos-inv-cost"
-                    label="Unit Cost (per unit)"
+                    label={
+                      isChefDept
+                        ? "Unit cost (per base unit, e.g. kg)"
+                        : "Unit Cost (per unit)"
+                    }
                     infoKey="unitCost"
                     openKey={openInfoKey}
                     onToggle={setOpenInfoKey}
@@ -1224,7 +2012,7 @@ export default function InventoryPage() {
                   />
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                      GH₵
+                      ₵
                     </span>
                     <Input
                       id="pos-inv-cost"
@@ -1254,7 +2042,7 @@ export default function InventoryPage() {
                   </label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                      GH₵
+                      ₵
                     </span>
                     <Input
                       id="pos-inv-total-amount"
@@ -1334,7 +2122,7 @@ export default function InventoryPage() {
                     onToggle={setOpenInfoKey}
                     containerRef={infoPopoverRef}
                   />
-                  {department === "restaurant" && supplierOptions.length > 0 ? (
+                  {isChefDept && supplierOptions.length > 0 ? (
                     <AppReactSelect
                       id="pos-inv-supplier"
                       value={form.supplier}
@@ -1364,12 +2152,7 @@ export default function InventoryPage() {
                 const qty = Number(form.currentStock) || 0;
                 const cost = Number(form.unitCost) || 0;
                 const total = qty * cost;
-                const money = new Intl.NumberFormat("en-GH", {
-                  style: "currency",
-                  currency: "GHS",
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                }).format(total);
+                const money = fmt(total);
                 return (
                   <div className="bg-slate-100 p-4 rounded-xl border border-slate-200">
                     <p className="text-lg font-bold text-slate-900">
@@ -1384,114 +2167,7 @@ export default function InventoryPage() {
               })()}
             </section>
 
-          {department === "restaurant" && restaurantUnits.length > 0 && (
-            <div className="space-y-3 rounded-xl border border-[#5a189a]/15 bg-[#faf5ff]/30 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-[#5a189a]">
-                Chef Units & Yield (optional)
-              </p>
-              <p className="text-xs text-slate-500">
-                Link this item to purchase & yield units defined in Units & Yields. e.g. purchased as &quot;small bag&quot;, yields &quot;20 plates&quot;.
-              </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Purchase Unit</label>
-                  <AppReactSelect
-                    value={form.purchaseUnitId}
-                    onChange={(v) => setForm((f) => ({ ...f, purchaseUnitId: v ?? "" }))}
-                    options={purchaseUnitOptions}
-                    placeholder="e.g. small bag"
-                    isClearable
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Yield Unit</label>
-                  <AppReactSelect
-                    value={form.yieldUnitId}
-                    onChange={(v) => setForm((f) => ({ ...f, yieldUnitId: v ?? "" }))}
-                    options={yieldUnitOptions}
-                    placeholder="e.g. plate"
-                    isClearable
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Yield per Purchase Unit</label>
-                  <Input
-                    value={form.yieldPerPurchaseUnit}
-                    onChange={(e) => setForm((f) => ({ ...f, yieldPerPurchaseUnit: e.target.value }))}
-                    type="number"
-                    min="0"
-                    step="any"
-                    placeholder="e.g. 20"
-                    className="rounded-xl border-slate-200 focus:border-[#5a189a] focus:ring-2 focus:ring-[#5a189a]/20"
-                  />
-                </div>
-              </div>
-              {form.purchaseUnitId && form.yieldUnitId && form.yieldPerPurchaseUnit && (
-                <div className="rounded-lg bg-[#5a189a]/5 border border-[#5a189a]/10 p-3 text-center">
-                  <p className="text-sm text-[#5a189a] font-semibold">
-                    1 {purchaseUnitOptions.find((o) => o.value === form.purchaseUnitId)?.label ?? "purchase unit"} ={" "}
-                    <span className="text-[#ff6d00]">{form.yieldPerPurchaseUnit}</span>{" "}
-                    {yieldUnitOptions.find((o) => o.value === form.yieldUnitId)?.label ?? "yield units"}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-            {/* Section 3: Chef Units & Yield */}
-            {department === "restaurant" && restaurantUnits.length > 0 && (
-              <section className="space-y-6">
-                <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-                  <FiPackage className="text-[#ec5b13]" />
-                  <h2 className="text-lg font-bold">Chef Units &amp; Yield (Optional)</h2>
-                </div>
-                <p className="text-sm text-slate-600">
-                  Link this item to purchase &amp; yield units defined in{" "}
-                  <span className="text-[#ec5b13] cursor-pointer hover:underline">
-                    Units &amp; Yields
-                  </span>
-                  . e.g. purchased as &quot;small bag&quot;, yields &quot;20 plates&quot;.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-semibold">Purchase Unit</label>
-                    <AppReactSelect
-                      value={form.purchaseUnitId}
-                      onChange={(v) => setForm((f) => ({ ...f, purchaseUnitId: v ?? "" }))}
-                      options={purchaseUnitOptions}
-                      placeholder="None"
-                      isClearable
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-semibold">Yield Unit</label>
-                    <AppReactSelect
-                      value={form.yieldUnitId}
-                      onChange={(v) => setForm((f) => ({ ...f, yieldUnitId: v ?? "" }))}
-                      options={yieldUnitOptions}
-                      placeholder="None"
-                      isClearable
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-semibold">Yield per Purchase Unit</label>
-                    <Input
-                      value={form.yieldPerPurchaseUnit}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, yieldPerPurchaseUnit: e.target.value }))
-                      }
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="1.0"
-                      className="rounded-xl border-slate-300 bg-white h-12 px-4 focus:border-[#ec5b13] focus:ring-2 focus:ring-[#ec5b13]/20"
-                    />
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* Section 4: Item Images */}
+            {/* Section 3: Item Images */}
             <section className="space-y-6">
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                 <div className="flex items-center gap-2">

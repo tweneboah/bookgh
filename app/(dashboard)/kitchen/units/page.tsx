@@ -134,7 +134,7 @@ export default function UnitsPage() {
   const confirmDeleteUnit = async () => {
     if (!deleteUnitId) return;
     try {
-      await deleteUnit.mutateAsync(deleteUnitId);
+      await deleteUnit.mutateAsync({ id: deleteUnitId, department: "restaurant" });
       toast.success("Unit deleted");
       setDeleteUnitId(null);
     } catch (err: any) {
@@ -224,7 +224,7 @@ export default function UnitsPage() {
   const confirmDeleteYield = async () => {
     if (!deleteYieldId) return;
     try {
-      await deleteYield.mutateAsync(deleteYieldId);
+      await deleteYield.mutateAsync({ id: deleteYieldId, department: "restaurant" });
       toast.success("Yield mapping deleted");
       setDeleteYieldId(null);
     } catch (err: any) {

@@ -330,10 +330,11 @@ export default function PurchaseOrdersPage() {
     const m = new Map<string, any[]>();
     for (const y of yieldMappings) {
       const itemId = String(
-        typeof y.inventoryItemId === "object"
+        typeof y.inventoryItemId === "object" && y.inventoryItemId?._id
           ? y.inventoryItemId._id
-          : y.inventoryItemId
+          : y.inventoryItemId ?? ""
       );
+      if (!itemId) continue;
       if (!m.has(itemId)) m.set(itemId, []);
       m.get(itemId)!.push(y);
     }
@@ -1209,31 +1210,6 @@ export default function PurchaseOrdersPage() {
                               visualVariant="solar"
                             />
                           </div>
-                          <label className="flex cursor-pointer items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={line.isNewItem}
-                              onChange={(e) =>
-                                setExtraLines((prev) =>
-                                  prev.map((entry, i) =>
-                                    i === idx
-                                      ? {
-                                          ...entry,
-                                          isNewItem: e.target.checked,
-                                          ...(e.target.checked
-                                            ? { inventoryItemId: "" }
-                                            : {}),
-                                        }
-                                      : entry
-                                  )
-                                )
-                              }
-                              className="h-5 w-5 rounded border-[#e2bfb0] text-[#a04100] focus:ring-[#ff6b00]/40"
-                            />
-                            <span className="text-sm font-semibold text-[#5a4136]">
-                              This item is new
-                            </span>
-                          </label>
                           {line.isNewItem ? (
                             <div className="grid gap-3 sm:grid-cols-2">
                               <Input

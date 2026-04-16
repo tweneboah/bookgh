@@ -13,6 +13,7 @@ import {
 } from "@/lib/department-movement";
 import { getInventoryItemModelForDepartment } from "@/lib/department-inventory";
 import { updateStationTransferSchema } from "@/validations/restaurant";
+import { stationTransferDebug } from "@/lib/station-transfer-debug";
 
 const RESTAURANT_MOVEMENT_ROLES = [
   USER_ROLES.TENANT_ADMIN,
@@ -27,6 +28,18 @@ const RESTAURANT_MOVEMENT_ROLES = [
 
 function toObjectId(value: string) {
   return new mongoose.Types.ObjectId(value);
+}
+
+/** Resolve line inventory ref from lean or populated subdocs */
+function inventoryItemIdFromLine(line: { inventoryItemId?: unknown }) {
+  const raw = (line.inventoryItemId as { _id?: unknown } | undefined)?._id ?? line.inventoryItemId;
+  if (raw == null) return null;
+  if (raw instanceof mongoose.Types.ObjectId) return raw;
+  try {
+    return new mongoose.Types.ObjectId(String(raw));
+  } catch {
+    return null;
+  }
 }
 
 async function applyStationTransferCompletion({
@@ -46,15 +59,43 @@ async function applyStationTransferCompletion({
   const LocationStockModel = getLocationStockModelForDepartment(department);
   const StationMovementModel = getStationMovementModelForDepartment(department);
 
+  stationTransferDebug("applyStationTransferCompletion:start", {
+    transferId: String(doc._id),
+    transferNumber: doc.transferNumber,
+    department,
+    inventoryCollection: InventoryItemModel.collection.name,
+    locationStockCollection: LocationStockModel.collection.name,
+    fromLocation: doc.fromLocation,
+    toLocation: doc.toLocation,
+    lineCount: (doc.lines ?? []).length,
+  });
+
   for (const line of doc.lines ?? []) {
-    const invId = line.inventoryItemId?._id ?? line.inventoryItemId;
+    const invId = inventoryItemIdFromLine(line);
     const qty = Number(line.quantity ?? 0);
     const unit = String(line.unit ?? "unit").trim();
     const itemName = String(line.itemName ?? "").trim();
-    if (qty <= 0) continue;
+    if (qty <= 0) {
+      stationTransferDebug("line:skip", { reason: "qty<=0", qty, itemName });
+      continue;
+    }
+    if (!invId) {
+      throw new BadRequestError("Transfer line is missing inventory item");
+    }
 
     const fromLoc = doc.fromLocation;
     const toLoc = doc.toLocation;
+
+    stationTransferDebug("line", {
+      itemName,
+      invId: String(invId),
+      qty,
+      unit,
+      fromLoc,
+      toLoc,
+      mainStoreConstant: STOCK_LOCATION.MAIN_STORE,
+      fromMatchesMainStore: fromLoc === STOCK_LOCATION.MAIN_STORE,
+    });
 
     // Deduct from source
     if (fromLoc === STOCK_LOCATION.MAIN_STORE) {
@@ -63,6 +104,11 @@ async function applyStationTransferCompletion({
         tenantId,
         branchId,
       } as any);
+      stationTransferDebug("mainStore:findOne", {
+        found: !!item,
+        invId: String(invId),
+        currentStock: item ? Number(item.currentStock ?? 0) : null,
+      });
       if (!item) throw new NotFoundError(`Inventory item ${itemName}`);
       const prev = Number(item.currentStock ?? 0);
       const next = Math.max(0, prev - qty);
@@ -73,6 +119,12 @@ async function applyStationTransferCompletion({
       }
       item.currentStock = next;
       await item.save();
+      stationTransferDebug("mainStore:deduct:saved", {
+        invId: String(invId),
+        prev,
+        next,
+        collection: InventoryItemModel.collection.name,
+      });
     } else {
       const locStock = await LocationStockModel.findOne({
         inventoryItemId: invId,
@@ -91,6 +143,12 @@ async function applyStationTransferCompletion({
         locStock.quantity = Math.max(0, prev - qty);
         await locStock.save();
       }
+      stationTransferDebug("locationStock:deduct", {
+        fromLoc,
+        invId: String(invId),
+        prev,
+        after: locStock ? Number(locStock.quantity ?? 0) : null,
+      });
     }
 
     // Add to destination
@@ -126,6 +184,11 @@ async function applyStationTransferCompletion({
         locStock.quantity = Number(locStock.quantity ?? 0) + qty;
         await locStock.save();
       }
+      stationTransferDebug("locationStock:add", {
+        toLoc,
+        invId: String(invId),
+        quantityAfter: Number(locStock.quantity ?? 0),
+      });
     }
 
     // Audit log
@@ -146,6 +209,11 @@ async function applyStationTransferCompletion({
       createdBy: userId,
     } as any);
   }
+
+  stationTransferDebug("applyStationTransferCompletion:done", {
+    transferId: String(doc._id),
+    linesProcessed: (doc.lines ?? []).length,
+  });
 }
 
 export const GET = withHandler(
@@ -181,6 +249,13 @@ export const PATCH = withHandler(
     const StationTransferModel = getStationTransferModelForDepartment(department);
     const body = await req.json();
     const data = updateStationTransferSchema.parse(body);
+    stationTransferDebug("PATCH:incoming", {
+      transferId: String(params.id),
+      department,
+      bodyKeys: Object.keys(body ?? {}),
+      parsedStatus: data.status ?? null,
+      note: "Inventory updates only when status becomes completed and applyStationTransferCompletion runs",
+    });
 
     const before = await StationTransferModel.findOne({
       _id: params.id,
@@ -188,6 +263,14 @@ export const PATCH = withHandler(
       branchId,
     } as any).lean();
     if (!before) throw new NotFoundError("Station transfer");
+
+    if (
+      data.status === STATION_TRANSFER_STATUS.COMPLETED &&
+      before.status !== STATION_TRANSFER_STATUS.COMPLETED &&
+      (!Array.isArray(before.lines) || before.lines.length === 0)
+    ) {
+      throw new BadRequestError("Cannot complete a transfer with no line items");
+    }
 
     const payload: Record<string, unknown> = {};
     if (data.fromLocation != null) payload.fromLocation = data.fromLocation;
@@ -210,7 +293,7 @@ export const PATCH = withHandler(
     const doc = await StationTransferModel.findOneAndUpdate(
       { _id: params.id, tenantId, branchId } as any,
       payload,
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     ).lean();
     if (!doc) throw new NotFoundError("Station transfer");
 
@@ -219,8 +302,42 @@ export const PATCH = withHandler(
       before.status !== STATION_TRANSFER_STATUS.COMPLETED &&
       doc.status === STATION_TRANSFER_STATUS.COMPLETED
     ) {
+      // Partial updates (e.g. status-only PATCH) can return a lean doc where nested `lines`
+      // is missing or empty in some Mongoose versions; always fall back to the pre-update row.
+      const lines =
+        Array.isArray(doc.lines) && doc.lines.length > 0
+          ? doc.lines
+          : before.lines ?? [];
+      const linesSource =
+        Array.isArray(doc.lines) && doc.lines.length > 0 ? "doc" : "before";
+      stationTransferDebug("PATCH:complete:transition", {
+        transferId: String(params.id),
+        department,
+        tenantId: String(tenantId),
+        branchId: String(branchId),
+        beforeStatus: before.status,
+        afterStatus: doc.status,
+        payloadKeys: Object.keys(payload),
+        docLinesLen: Array.isArray(doc.lines) ? doc.lines.length : "not-array",
+        beforeLinesLen: Array.isArray(before.lines) ? before.lines.length : "not-array",
+        linesSource,
+        resolvedLinesLen: lines.length,
+        firstLineInvPreview: lines[0]
+          ? {
+              rawInventoryItemId: lines[0].inventoryItemId,
+              quantity: lines[0].quantity,
+            }
+          : null,
+      });
+      const snapshot = {
+        ...doc,
+        _id: doc._id,
+        lines,
+        fromLocation: doc.fromLocation ?? before.fromLocation,
+        toLocation: doc.toLocation ?? before.toLocation,
+      };
       await applyStationTransferCompletion({
-        doc,
+        doc: snapshot,
         tenantId,
         branchId,
         department,
@@ -231,6 +348,18 @@ export const PATCH = withHandler(
         { _id: params.id, tenantId, branchId } as any,
         { $set: { completedAt: new Date() } }
       );
+    } else if (data.status === STATION_TRANSFER_STATUS.COMPLETED) {
+      stationTransferDebug("PATCH:complete:skipped", {
+        transferId: String(params.id),
+        beforeStatus: before.status,
+        docStatus: doc.status,
+        reason:
+          before.status === STATION_TRANSFER_STATUS.COMPLETED
+            ? "already_completed"
+            : doc.status !== STATION_TRANSFER_STATUS.COMPLETED
+              ? "update_did_not_set_completed"
+              : "unknown",
+      });
     }
 
     await ActivityLog.create({
