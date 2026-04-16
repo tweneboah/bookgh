@@ -44,3 +44,6 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 
 in Ghana we have gigital address eg(AK-8834), this gives accurate location . can we use this?
+
+
+platform.owner@example.com Password: ChangeMe!Platform1

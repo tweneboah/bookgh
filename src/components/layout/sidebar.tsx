@@ -159,14 +159,14 @@ const NAV_SECTIONS: NavSection[] = [
     ],
     roles: ["customer"],
   },
-  // {
-  //   title: "Hotel Branches",
-  //   icon: Building2,
-  //   items: [
-  //     { href: "/branches", label: "Branches", icon: GitBranch },
-  //   ],
-  //   roles: ADMIN_ROLES,
-  // },
+  {
+    title: "Hotel Branches",
+    icon: Building2,
+    items: [
+      { href: "/branches", label: "Branches", icon: GitBranch },
+    ],
+    roles: ADMIN_ROLES,
+  },
   {
     title: "Restaurant Department",
     icon: UtensilsCrossed,
